@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F0F13"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Hero Search Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#13131A"
+            android:padding="24dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Find Files on Your Network"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Search for files shared by people on the same Wi-Fi as you."
+                android:textColor="#6B7080"
+                android:textSize="14sp"
+                android:layout_marginBottom="20dp" />
+
+            <EditText
+                android:id="@+id/search_field"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:hint="Type a filename, e.g. lecture_notes.pdf"
+                android:hintTextColor="#555877"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/search_field_bg"
+                android:padding="12dp"
+                android:textSize="15sp"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:layout_marginBottom="12dp" />
+
+            <Button
+                android:id="@+id/search_button"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="🔍  Search the Network"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/button_primary" />
+
+        </LinearLayout>
+
+        <!-- Progress and Status -->
+        <ProgressBar
+            android:id="@+id/search_progress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="16dp"
+            android:layout_marginStart="24dp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Search for a file above to see results here."
+            android:textColor="#444460"
+            android:textSize="14sp"
+            android:padding="24dp" />
+
+        <!-- Results list -->
+        <LinearLayout
+            android:id="@+id/results_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp" />
+
+    </LinearLayout>
+</ScrollView>

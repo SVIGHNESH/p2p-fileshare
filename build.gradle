@@ -1,0 +1,22 @@
+allprojects {
+    group = 'com.p2p'
+    version = '1.0.0'
+
+    repositories {
+        mavenCentral()
+        google()
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+    java {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+}
+
+project(':android') {
+    // Android module uses its own plugin, skip java plugin
+    plugins.withId('java') { project.plugins.removeIf { it instanceof JavaPlugin } }
+}

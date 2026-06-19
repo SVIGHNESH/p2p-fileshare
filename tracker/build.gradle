@@ -1,0 +1,10 @@
+dependencies {
+    implementation project(':core')
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
+
+jar {
+    manifest { attributes 'Main-Class': 'com.p2p.tracker.TrackerServer' }
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}

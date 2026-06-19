@@ -1,0 +1,46 @@
+# Build outputs
+build/
+out/
+*.jar
+*.class
+
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Android Studio / SDK
+android/.externalNativeBuild/
+android/captures/
+android/local.properties
+*.apk
+*.aab
+*.ap_
+
+# Runtime generated
+~/.p2pshare/
+*.meta
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+/tmp/
+
+# Secrets / keystores
+*.jks
+*.p12
+*.keystore
+
+# Android generated libs
+android/libs/

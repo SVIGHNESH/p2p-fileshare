@@ -1,0 +1,135 @@
+/* Global dark theme for P2P Share desktop app */
+
+.root {
+    -fx-background-color: #0f0f13;
+    -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Tab pane */
+.tab-pane > .tab-header-area {
+    -fx-background-color: #16161f;
+    -fx-border-color: #2a2a3a;
+    -fx-border-width: 0 0 1 0;
+}
+
+.tab-pane > .tab-header-area > .tab-header-background {
+    -fx-background-color: #16161f;
+}
+
+.tab {
+    -fx-background-color: #16161f;
+    -fx-padding: 10 20 10 20;
+    -fx-background-radius: 0;
+    -fx-border-width: 0;
+}
+
+.tab:selected {
+    -fx-background-color: #0f0f13;
+    -fx-border-color: #7c6ef7;
+    -fx-border-width: 0 0 3 0;
+}
+
+.tab .tab-label {
+    -fx-text-fill: #6b7080;
+    -fx-font-size: 14px;
+    -fx-font-weight: normal;
+}
+
+.tab:selected .tab-label {
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+}
+
+.tab:hover .tab-label {
+    -fx-text-fill: #c0c0d0;
+}
+
+/* Scroll bars */
+.scroll-bar:vertical,
+.scroll-bar:horizontal {
+    -fx-background-color: #0f0f13;
+    -fx-pref-width: 8;
+    -fx-pref-height: 8;
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: #3a3a5a;
+    -fx-background-radius: 4;
+}
+
+.scroll-bar .thumb:hover {
+    -fx-background-color: #7c6ef7;
+}
+
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+}
+
+.scroll-pane > .viewport {
+    -fx-background-color: #0f0f13;
+}
+
+/* Progress bar */
+.progress-bar > .bar {
+    -fx-background-radius: 5;
+    -fx-background-insets: 0;
+}
+
+.progress-bar > .track {
+    -fx-background-color: #2a2a3a;
+    -fx-background-radius: 5;
+    -fx-background-insets: 0;
+}
+
+/* Tooltip */
+.tooltip {
+    -fx-background-color: #1e1e2e;
+    -fx-text-fill: white;
+    -fx-border-color: #3a3a5a;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-font-size: 12px;
+}
+
+/* Alert dialogs */
+.dialog-pane {
+    -fx-background-color: #16161f;
+}
+
+.dialog-pane > .content {
+    -fx-background-color: #16161f;
+    -fx-text-fill: white;
+}
+
+.dialog-pane .label {
+    -fx-text-fill: #c0c0d0;
+}
+
+.dialog-pane .button {
+    -fx-background-color: #7c6ef7;
+    -fx-text-fill: white;
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+}
+
+.dialog-pane .button:hover {
+    -fx-background-color: #9c8ef7;
+}
+
+/* Text field focus glow */
+.text-field:focused {
+    -fx-border-color: #7c6ef7 !important;
+    -fx-effect: dropshadow(gaussian, rgba(124,110,247,0.25), 8, 0, 0, 0);
+}
+
+/* Button hover */
+.button:hover {
+    -fx-opacity: 0.88;
+}
+
+.button:pressed {
+    -fx-opacity: 0.75;
+}

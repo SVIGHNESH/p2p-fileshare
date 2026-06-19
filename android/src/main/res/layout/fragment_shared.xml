@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0F0F13">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#13131A"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="My Shared Files"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Files in your shared folder are visible to everyone on the network."
+            android:textColor="#6B7080"
+            android:textSize="13sp"
+            android:layout_marginTop="4dp" />
+
+    </LinearLayout>
+
+    <!-- Shared folder banner -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#0D1020"
+        android:padding="14dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📂  "
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/folder_path_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Shared folder: /storage/emulated/0/Download/P2PShare"
+            android:textColor="#7C6EF7"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+    <!-- Add file button -->
+    <Button
+        android:id="@+id/add_file_btn"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_margin="16dp"
+        android:text="+ Add File to Share"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:background="@drawable/button_primary" />
+
+    <!-- File list -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#0F0F13">
+
+        <LinearLayout
+            android:id="@+id/files_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/empty_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="You are not sharing any files yet.\nTap '+ Add File to Share' to get started."
+                android:textColor="#444460"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:padding="32dp" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

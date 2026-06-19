@@ -1,0 +1,5 @@
+rootProject.name = 'p2p-fileshare'
+include 'core'
+include 'tracker'
+include 'desktop'
+include 'android'
