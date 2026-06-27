@@ -22,8 +22,8 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Real-socket E2E tests for the tracker request path.
@@ -58,13 +58,18 @@ class TrackerServerE2ETest {
 
     /** Sends one request and returns the single-line response, mirroring the real client framing. */
     private Message roundTrip(Message request) throws IOException {
+        return roundTripRaw(request.toJson().trim());
+    }
+
+    /** Sends an arbitrary raw request line (UTF-8 + '\n') and returns the parsed single-line reply. */
+    private Message roundTripRaw(String rawLine) throws IOException {
         // Connect from the loopback interface so the server's accepted socket sees 127.0.0.1.
         try (Socket s = new Socket("127.0.0.1", port);
              BufferedReader in = new BufferedReader(
                      new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8));
              PrintWriter out = new PrintWriter(
                      new OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8), true)) {
-            out.println(request.toJson().trim());
+            out.println(rawLine);
             String line = in.readLine();
             return line == null ? null : Message.fromJson(line);
         }
@@ -153,5 +158,99 @@ class TrackerServerE2ETest {
             if (t.isAlive() && t.getName().startsWith("tracker-client")) n++;
         }
         return n;
+    }
+
+    // ── TR.5: structured ERROR on bad input (never a silent dropped connection) ─
+
+    @Test
+    void malformedJsonGetsStructuredError() throws IOException {
+        Message resp = roundTripRaw("this is definitely not json");
+        assertNotNull(resp, "a malformed request must get a reply, not a dropped connection");
+        assertEquals(MessageType.ERROR, resp.type);
+    }
+
+    @Test
+    void literalNullMessageGetsStructuredError() throws IOException {
+        // Gson deserializes the literal "null" to a null Message; the old switch NPE'd on msg.type.
+        Message resp = roundTripRaw("null");
+        assertNotNull(resp);
+        assertEquals(MessageType.ERROR, resp.type);
+    }
+
+    @Test
+    void unknownMessageTypeGetsStructuredError() throws IOException {
+        // An unknown enum constant leaves type == null, which NPE'd switch(msg.type) before the
+        // default case could run — so this exercises a different path than a valid-but-odd type.
+        Message resp = roundTripRaw("{\"type\":\"BOGUS_TYPE\",\"payload\":\"{}\"}");
+        assertNotNull(resp);
+        assertEquals(MessageType.ERROR, resp.type);
+    }
+
+    @Test
+    void missingPayloadGetsStructuredError() throws IOException {
+        // A valid type but no payload → getPayload(...) returns null → would NPE on req.port.
+        Message resp = roundTripRaw("{\"type\":\"REGISTER\"}");
+        assertNotNull(resp);
+        assertEquals(MessageType.ERROR, resp.type);
+    }
+
+    @Test
+    void registerWithInvalidPortGetsStructuredError() throws IOException {
+        Message resp = roundTrip(new Message(MessageType.REGISTER,
+                new RegisterRequest("x", 0, new ArrayList<>())));
+        assertEquals(MessageType.ERROR, resp.type, "port 0 is not a valid listening port");
+    }
+
+    // ── TR.4: read timeout (slowloris) and bounded line length ─────────────────
+
+    @Test
+    void slowlorisConnectionIsClosedAfterReadTimeout() throws IOException {
+        server.setReadTimeoutMs(300); // tiny so the test does not wait the 10s production default
+        long start = System.currentTimeMillis();
+        try (Socket s = new Socket("127.0.0.1", port)) {
+            s.setSoTimeout(5000); // client-side guard so a regression can't hang the suite forever
+            // Send nothing at all. The server must time out reading and close the connection.
+            int b = s.getInputStream().read();
+            long elapsed = System.currentTimeMillis() - start;
+            assertEquals(-1, b, "a client that never sends a line must be disconnected (EOF), not pinned");
+            assertTrue(elapsed >= 250 && elapsed < 4000,
+                    "the disconnect must be driven by the ~300ms read timeout, not the client guard");
+        }
+    }
+
+    @Test
+    void oversizedLineGetsStructuredError() throws IOException {
+        server.setMaxLineBytes(50); // small cap so the test sends bytes, not megabytes
+        // Send exactly cap+1 bytes with no newline: the server consumes all of them, hits the cap,
+        // and replies ERROR. cap+1 (not more) leaves no unread bytes, so close() sends a clean FIN
+        // rather than an RST that could race the ERROR reply.
+        byte[] payload = "a".repeat(51).getBytes(StandardCharsets.UTF_8);
+        try (Socket s = new Socket("127.0.0.1", port)) {
+            s.setSoTimeout(5000);
+            s.getOutputStream().write(payload);
+            s.getOutputStream().flush();
+            BufferedReader in = new BufferedReader(
+                    new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8));
+            Message resp = Message.fromJson(in.readLine());
+            assertEquals(MessageType.ERROR, resp.type, "an oversized line earns an ERROR, not a drop");
+        }
+    }
+
+    @Test
+    void aPeerAtTheFilesCapStillRegistersSuccessfully() throws IOException {
+        // The cap relationship the line limit must respect: a legitimate max-files REGISTER (the
+        // desktop re-sends its whole list every 30s) must NOT be rejected as oversized.
+        List<FileInfo> files = new ArrayList<>();
+        for (int i = 0; i < PeerRegistry.MAX_FILES_PER_PEER; i++) {
+            files.add(new FileInfo(String.format("track-%05d.flac", i), 4_000_000, 8,
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")); // 64-hex
+        }
+        Message resp = roundTrip(new Message(MessageType.REGISTER,
+                new RegisterRequest("ignored", 9001, files)));
+        assertEquals(MessageType.HEARTBEAT, resp.type,
+                "a max-files register must succeed — the line cap is derived to exceed it");
+
+        assertEquals(1, roundTrip(new Message(MessageType.QUERY, new QueryRequest("track-00000.flac")))
+                .getPayload(PeerListResponse.class).peers.size(), "the registered files are queryable");
     }
 }

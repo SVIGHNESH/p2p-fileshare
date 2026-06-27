@@ -5,6 +5,7 @@ import com.p2p.core.protocol.Protocol.*;
 
 import java.io.*;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class TrackerClient {
@@ -61,9 +62,14 @@ public class TrackerClient {
     }
 
     private Message sendAndReceive(Message msg) throws IOException {
+        // TE.1: pin UTF-8 to match the tracker server's pinned streams. On JDK 18+ the default is
+        // already UTF-8 (JEP 400), but being explicit on both ends prevents a mismatch on non-ASCII
+        // filenames if the JVM default is forced back (e.g. -Dfile.encoding=COMPAT).
         try (Socket socket = new Socket(trackerHost, trackerPort);
-             PrintWriter out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream()), true);
-             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+             PrintWriter out = new PrintWriter(
+                     new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
+             BufferedReader in = new BufferedReader(
+                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
             socket.setSoTimeout(5000);
             out.println(msg.toJson());
             String line = in.readLine();

@@ -77,4 +77,55 @@ class PeerRegistryTest {
                 "lookup stays case-insensitive after the null-guard");
         assertFalse(registry.getAllFilenames().isEmpty());
     }
+
+    // ── TR.4: registry footprint caps ─────────────────────────────────────────
+
+    @Test
+    void registerCapsFilesPerPeer() {
+        PeerRegistry registry = new PeerRegistry();
+        List<FileInfo> files = new ArrayList<>();
+        for (int i = 0; i < PeerRegistry.MAX_FILES_PER_PEER + 50; i++) {
+            files.add(named("file" + i + ".bin")); // distinct names so getAllFilenames doesn't dedup
+        }
+        registry.register(new PeerInfo("10.1.0.1", 9001, files));
+
+        assertEquals(PeerRegistry.MAX_FILES_PER_PEER, registry.getAllFilenames().size(),
+                "a peer cannot register more than the per-peer file cap");
+    }
+
+    @Test
+    void registerDropsOverLongFilenames() {
+        PeerRegistry registry = new PeerRegistry();
+        String tooLong = "a".repeat(PeerRegistry.MAX_FILENAME_LENGTH + 1);
+        String atLimit = "b".repeat(PeerRegistry.MAX_FILENAME_LENGTH);
+        registry.register(new PeerInfo("10.1.0.2", 9001,
+                new ArrayList<>(Arrays.asList(named(tooLong), named(atLimit), named("ok.txt")))));
+
+        Set<String> names = registry.getAllFilenames();
+        assertEquals(Set.of(atLimit, "ok.txt"), names,
+                "names over the length cap are dropped; one exactly at the cap survives");
+    }
+
+    @Test
+    void registerCapsTotalPeersButStillAllowsUpdatesToKnownPeers() {
+        PeerRegistry registry = new PeerRegistry();
+        for (int i = 0; i < PeerRegistry.MAX_PEERS; i++) {
+            String ip = "10." + (i >>> 16 & 0xFF) + "." + (i >>> 8 & 0xFF) + "." + (i & 0xFF);
+            assertTrue(registry.register(new PeerInfo(ip, 9001, null)),
+                    "every peer up to the cap registers");
+        }
+        assertEquals(PeerRegistry.MAX_PEERS, registry.getPeerCount());
+
+        // A brand-new peer beyond the cap is refused...
+        assertFalse(registry.register(new PeerInfo("172.16.0.1", 9001, null)),
+                "a new peer past the cap is rejected");
+        assertEquals(PeerRegistry.MAX_PEERS, registry.getPeerCount());
+
+        // ...but an already-known peer may still update in place (never lock out a live peer).
+        PeerInfo existing = new PeerInfo("10.0.0.0", 9001,
+                new ArrayList<>(List.of(named("update.bin"))));
+        assertTrue(registry.register(existing),
+                "an existing peer can re-register even when the table is full");
+        assertEquals(1, registry.findPeersWithFile("update.bin").size());
+    }
 }
