@@ -7,17 +7,33 @@ import com.p2p.core.protocol.Protocol.*;
 
 import java.io.*;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
  * Coordinates downloading a file from multiple peers simultaneously.
- * Each chunk is assigned to a peer and downloaded in parallel threads.
+ * Missing chunks are pulled from a shared work-queue by parallel workers; a chunk
+ * whose fetch fails is requeued onto a different healthy peer and a peer that fails
+ * repeatedly is evicted, so one down peer no longer fails the whole download (T0.3).
  * Supports resuming interrupted downloads.
  */
 public class DownloadManager {
+
+    /**
+     * A peer that fails this many chunk fetches is considered dead and stops being
+     * assigned new chunks (T0.3). Per-chunk failover already prevents retrying the
+     * same peer for the same chunk; this cross-chunk counter stops a flaky/down peer
+     * from being tried for every remaining chunk.
+     */
+    private static final int PEER_DEAD_THRESHOLD = 3;
+
+    /** Upper bound on concurrent chunk workers per download; the effective count is also capped by peer count. */
+    private static final int MAX_CHUNK_WORKERS_PER_DOWNLOAD = 8;
 
     public enum DownloadState { QUEUED, CONNECTING, DOWNLOADING, VERIFYING, COMPLETE, FAILED, PAUSED }
 
@@ -121,35 +137,16 @@ public class DownloadManager {
             if (missing.length > 0) {
                 task.state = DownloadState.DOWNLOADING;
 
-                // Distribute chunks across available peers in round-robin
-                List<Future<?>> chunkFutures = new CopyOnWriteArrayList<>();
-                for (int i = 0; i < missing.length; i++) {
-                    final int chunkIndex = missing[i];
-                    final PeerInfo peer = task.peers.get(i % task.peers.size());
-
-                    chunkFutures.add(chunkPool.submit(() -> {
-                        try {
-                            byte[] data = chunkFetcher.fetch(peer, task.filename, chunkIndex);
-                            if (data != null) {
-                                fr.writeChunk(chunkIndex, data);
-                                task.progress = fr.getProgress();
-                                fr.saveState();
-                                notifyProgress(task);
-                            }
-                        } catch (Exception e) {
-                            System.err.println("[DL] Chunk " + chunkIndex + " failed: " + e.getMessage());
-                        }
-                    }));
+                if (task.peers == null || task.peers.isEmpty()) {
+                    fail(task, "No peers available to download from.");
+                    return;
                 }
 
-                // Wait for all chunks
-                for (Future<?> f : chunkFutures) {
-                    try { f.get(); } catch (Exception ignored) {}
-                }
+                fetchMissingChunks(task, fr, missing);
             }
 
             if (!fr.isComplete()) {
-                fail(task, "Some chunks could not be downloaded. Try again to resume.");
+                fail(task, "Some chunks could not be downloaded from any available peer. Try again to resume.");
                 return;
             }
 
@@ -194,6 +191,106 @@ public class DownloadManager {
         } finally {
             activeTasks.remove(task.filename);
         }
+    }
+
+    /**
+     * Fetches every still-missing chunk using a shared work-queue with peer failover (T0.3).
+     *
+     * <p>Rather than statically pinning chunk {@code i} to peer {@code i % peers}, any worker
+     * pulls any pending chunk from a shared queue. A chunk whose fetch fails is requeued so a
+     * DIFFERENT peer can serve it (the failing peer is recorded on the chunk and never retried
+     * for it), and a peer that crosses {@link #PEER_DEAD_THRESHOLD} failures is evicted so dead
+     * peers stop getting work. A single down peer therefore no longer fails the whole download
+     * when healthy peers hold the file.
+     *
+     * <p>Termination is bounded: a chunk is requeued at most once per peer (each requeue adds
+     * one entry to its tried-peer set), after which {@code pickPeer} returns {@code null} and the
+     * chunk is dropped, leaving {@code fr.isComplete()} false so the caller fails the download.
+     */
+    private void fetchMissingChunks(DownloadTask task, FileReassembler fr, int[] missing) {
+        Queue<ChunkWork> queue = new ConcurrentLinkedQueue<>();
+        for (int idx : missing) queue.add(new ChunkWork(idx));
+
+        Set<String> deadPeers = ConcurrentHashMap.newKeySet();
+        ConcurrentHashMap<String, AtomicInteger> peerFailures = new ConcurrentHashMap<>();
+        AtomicInteger peerCursor = new AtomicInteger();
+
+        // Cap parallelism by peer count: pre-pipelining, one in-flight request per peer is the
+        // right shape, and it keeps any one download from monopolizing the shared chunk pool.
+        int workerCount = Math.min(MAX_CHUNK_WORKERS_PER_DOWNLOAD,
+                Math.min(missing.length, Math.max(1, task.peers.size())));
+
+        List<Future<?>> workers = new ArrayList<>(workerCount);
+        for (int w = 0; w < workerCount; w++) {
+            workers.add(chunkPool.submit(() ->
+                    drainChunkQueue(task, fr, queue, deadPeers, peerFailures, peerCursor)));
+        }
+        for (Future<?> f : workers) {
+            try { f.get(); } catch (Exception ignored) {}
+        }
+    }
+
+    /** One chunk-fetch worker: drains the shared queue, failing over and requeuing as needed. */
+    private void drainChunkQueue(DownloadTask task, FileReassembler fr, Queue<ChunkWork> queue,
+                                 Set<String> deadPeers, ConcurrentHashMap<String, AtomicInteger> peerFailures,
+                                 AtomicInteger peerCursor) {
+        ChunkWork work;
+        while ((work = queue.poll()) != null) {
+            PeerInfo peer = pickPeer(task.peers, work.triedPeers, deadPeers, peerCursor);
+            if (peer == null) {
+                // No healthy, untried peer left for this chunk — it cannot be recovered. Drop it;
+                // the unfilled slot makes fr.isComplete() false so the download is failed cleanly.
+                continue;
+            }
+            String key = peerKey(peer);
+            try {
+                byte[] data = chunkFetcher.fetch(peer, task.filename, work.index);
+                if (data == null) throw new IOException("peer returned no data");
+                fr.writeChunk(work.index, data);
+                task.progress = fr.getProgress();
+                fr.saveState();
+                notifyProgress(task);
+            } catch (Exception e) {
+                // Never retry the same peer for this chunk; bump its failure counter, evict it once
+                // it crosses the dead threshold, and requeue the chunk so a different peer serves it.
+                work.triedPeers.add(key);
+                int fails = peerFailures.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
+                if (fails >= PEER_DEAD_THRESHOLD) deadPeers.add(key);
+                System.err.println("[DL] Chunk " + work.index + " from " + key + " failed: " + e.getMessage());
+                queue.add(work);
+            }
+        }
+    }
+
+    /**
+     * Round-robin selects a peer that is neither dead nor already tried for this chunk, or
+     * {@code null} when none remain. The cursor is read ONCE per call to pick a starting offset
+     * (which spreads load across peers and workers); the scan then iterates locally over
+     * {@code start + k}. Incrementing the shared cursor inside the loop would be a bug: a
+     * concurrent increment from another worker could shift this call's two reads onto the same
+     * peer, so a healthy peer is skipped and the chunk is wrongly dropped.
+     */
+    private static PeerInfo pickPeer(List<PeerInfo> peers, Set<String> tried,
+                                     Set<String> dead, AtomicInteger cursor) {
+        int n = peers.size();
+        int start = cursor.getAndIncrement();
+        for (int k = 0; k < n; k++) {
+            PeerInfo p = peers.get(Math.floorMod(start + k, n));
+            String key = peerKey(p);
+            if (!dead.contains(key) && !tried.contains(key)) return p;
+        }
+        return null;
+    }
+
+    private static String peerKey(PeerInfo p) {
+        return p.ip + ":" + p.port;
+    }
+
+    /** A pending chunk plus the set of peers already tried (and failed) for it. */
+    private static final class ChunkWork {
+        final int index;
+        final Set<String> triedPeers = ConcurrentHashMap.newKeySet();
+        ChunkWork(int index) { this.index = index; }
     }
 
     private void fail(DownloadTask task, String message) {
