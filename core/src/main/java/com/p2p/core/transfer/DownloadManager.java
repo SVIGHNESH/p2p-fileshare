@@ -3,12 +3,15 @@ package com.p2p.core.transfer;
 import com.p2p.core.chunking.FileChunker;
 import com.p2p.core.chunking.FileReassembler;
 import com.p2p.core.crypto.TLSHelper;
+import com.p2p.core.protocol.Protocol;
 import com.p2p.core.protocol.Protocol.*;
 
 import java.io.*;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.*;
@@ -38,9 +41,29 @@ public class DownloadManager {
     public enum DownloadState { QUEUED, CONNECTING, DOWNLOADING, VERIFYING, COMPLETE, FAILED, PAUSED }
 
     /**
-     * Fetches a single verified chunk from a peer. The default implementation opens
-     * a TLS connection and validates the chunk checksum; tests inject an in-memory
-     * fetcher so the download orchestration can be exercised without sockets.
+     * Opens a (persistent) connection to a peer for fetching chunks (T0.1). The default
+     * implementation does a single TLS handshake and reuses the socket for every chunk a worker
+     * pulls for that peer; tests inject an in-memory source so the download orchestration can be
+     * exercised without sockets.
+     */
+    @FunctionalInterface
+    public interface ChunkSource {
+        PeerConnection connect(PeerInfo peer) throws IOException;
+    }
+
+    /**
+     * A live connection to one peer over which many chunk requests are pipelined back to back,
+     * amortizing the TLS handshake across the whole download (T0.1). A connection is owned by a
+     * single chunk-worker thread (thread-confined), so {@link #fetchChunk} needs no internal locking.
+     */
+    public interface PeerConnection extends Closeable {
+        byte[] fetchChunk(String filename, int chunkIndex) throws IOException;
+    }
+
+    /**
+     * Legacy stateless seam: fetches one verified chunk per call. Retained so existing socket-free
+     * tests (and any caller passing a per-chunk fetcher) keep working; it is adapted to a
+     * {@link ChunkSource} whose connection simply delegates each chunk to {@link #fetch}.
      */
     @FunctionalInterface
     public interface ChunkFetcher {
@@ -86,7 +109,7 @@ public class DownloadManager {
         }
     }
 
-    private final ChunkFetcher chunkFetcher;
+    private final ChunkSource chunkSource;
     // T0.2: the per-file coordinator blocks on Future.get() while chunk workers do the
     // actual fetching. They MUST live in separate pools — sharing one pool means that
     // once concurrent downloads reach the pool size, every thread is a blocked
@@ -98,12 +121,26 @@ public class DownloadManager {
     private final ConcurrentHashMap<String, Future<?>> activeTasks = new ConcurrentHashMap<>();
 
     public DownloadManager() {
-        this(DownloadManager::tlsDownloadChunk);
+        this(TlsPeerConnection::open);
     }
 
-    /** Test/seam constructor: inject how a single chunk is fetched. */
-    public DownloadManager(ChunkFetcher chunkFetcher) {
-        this.chunkFetcher = chunkFetcher;
+    /** Seam constructor: inject how a peer connection is opened (default = persistent TLS). */
+    public DownloadManager(ChunkSource chunkSource) {
+        this.chunkSource = chunkSource;
+    }
+
+    /**
+     * Backward-compatible seam: inject a stateless per-chunk fetcher. Adapted to a {@link ChunkSource}
+     * whose connection opens nothing and delegates each chunk to {@code fetcher.fetch}, preserving the
+     * exact one-call-per-chunk semantics the socket-free orchestration tests rely on.
+     */
+    public DownloadManager(ChunkFetcher fetcher) {
+        this(peer -> new PeerConnection() {
+            @Override public byte[] fetchChunk(String filename, int chunkIndex) throws IOException {
+                return fetcher.fetch(peer, filename, chunkIndex);
+            }
+            @Override public void close() {}
+        });
     }
 
     public void download(DownloadTask task) {
@@ -234,32 +271,52 @@ public class DownloadManager {
     private void drainChunkQueue(DownloadTask task, FileReassembler fr, Queue<ChunkWork> queue,
                                  Set<String> deadPeers, ConcurrentHashMap<String, AtomicInteger> peerFailures,
                                  AtomicInteger peerCursor) {
-        ChunkWork work;
-        while ((work = queue.poll()) != null) {
-            PeerInfo peer = pickPeer(task.peers, work.triedPeers, deadPeers, peerCursor);
-            if (peer == null) {
-                // No healthy, untried peer left for this chunk — it cannot be recovered. Drop it;
-                // the unfilled slot makes fr.isComplete() false so the download is failed cleanly.
-                continue;
+        // Thread-confined: this worker keeps one open connection per peer and reuses it across every
+        // chunk it pulls for that peer (T0.1), so the TLS handshake is paid once per peer, not once per
+        // chunk. The map is local to this thread, so no connection is ever touched concurrently.
+        Map<String, PeerConnection> connections = new HashMap<>();
+        try {
+            ChunkWork work;
+            while ((work = queue.poll()) != null) {
+                PeerInfo peer = pickPeer(task.peers, work.triedPeers, deadPeers, peerCursor);
+                if (peer == null) {
+                    // No healthy, untried peer left for this chunk — it cannot be recovered. Drop it;
+                    // the unfilled slot makes fr.isComplete() false so the download is failed cleanly.
+                    continue;
+                }
+                String key = peerKey(peer);
+                try {
+                    PeerConnection conn = connections.get(key);
+                    if (conn == null) {
+                        conn = chunkSource.connect(peer);
+                        connections.put(key, conn);
+                    }
+                    byte[] data = conn.fetchChunk(task.filename, work.index);
+                    if (data == null) throw new IOException("peer returned no data");
+                    fr.writeChunk(work.index, data);
+                    task.progress = fr.getProgress();
+                    fr.saveState();
+                    notifyProgress(task);
+                } catch (Exception e) {
+                    // A failure can leave the stream mid-frame, so drop and close this peer's connection;
+                    // a later chunk for the same peer reconnects cleanly. Never retry the same peer for
+                    // THIS chunk; bump its failure counter, evict it past the dead threshold, and requeue
+                    // the chunk so a different peer serves it.
+                    closeQuietly(connections.remove(key));
+                    work.triedPeers.add(key);
+                    int fails = peerFailures.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
+                    if (fails >= PEER_DEAD_THRESHOLD) deadPeers.add(key);
+                    System.err.println("[DL] Chunk " + work.index + " from " + key + " failed: " + e.getMessage());
+                    queue.add(work);
+                }
             }
-            String key = peerKey(peer);
-            try {
-                byte[] data = chunkFetcher.fetch(peer, task.filename, work.index);
-                if (data == null) throw new IOException("peer returned no data");
-                fr.writeChunk(work.index, data);
-                task.progress = fr.getProgress();
-                fr.saveState();
-                notifyProgress(task);
-            } catch (Exception e) {
-                // Never retry the same peer for this chunk; bump its failure counter, evict it once
-                // it crosses the dead threshold, and requeue the chunk so a different peer serves it.
-                work.triedPeers.add(key);
-                int fails = peerFailures.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
-                if (fails >= PEER_DEAD_THRESHOLD) deadPeers.add(key);
-                System.err.println("[DL] Chunk " + work.index + " from " + key + " failed: " + e.getMessage());
-                queue.add(work);
-            }
+        } finally {
+            for (PeerConnection conn : connections.values()) closeQuietly(conn);
         }
+    }
+
+    private static void closeQuietly(PeerConnection conn) {
+        if (conn != null) try { conn.close(); } catch (IOException ignored) {}
     }
 
     /**
@@ -299,31 +356,65 @@ public class DownloadManager {
         if (task.onError != null) task.onError.accept(task);
     }
 
-    /** Default fetcher: open a TLS connection, request one chunk, and verify its checksum. */
-    private static byte[] tlsDownloadChunk(PeerInfo peer, String filename, int chunkIndex) throws IOException {
-        try (Socket socket = TLSHelper.createClientSocket(peer.ip, peer.port);
-             PrintWriter out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream()), true);
-             DataInputStream in = new DataInputStream(socket.getInputStream())) {
+    /**
+     * Default {@link PeerConnection}: one TLS socket reused for many length-prefixed chunk requests (T0.1).
+     * The handshake happens once in {@link #open}; each {@link #fetchChunk} writes a request frame and reads
+     * the response frame plus the raw chunk body, validating the body size and per-chunk checksum.
+     */
+    static final class TlsPeerConnection implements PeerConnection {
+        /** Per-request idle read timeout; a stalled peer fails this chunk and triggers T0.3 failover. */
+        private static final int READ_TIMEOUT_MS = 30_000;
 
-            socket.setSoTimeout(30000);
-            Message req = new Message(MessageType.CHUNK_REQUEST, new ChunkRequest(filename, chunkIndex));
-            out.print(req.toJson());
+        private final Socket socket;
+        private final DataInputStream in;
+        private final DataOutputStream out;
+
+        private TlsPeerConnection(Socket socket) throws IOException {
+            this.socket = socket;
+            try {
+                socket.setSoTimeout(READ_TIMEOUT_MS);
+                this.in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+                this.out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+            } catch (IOException e) {
+                // The half-built connection is unreachable, so close the socket here rather than
+                // leaking it (the old try-with-resources fetcher was leak-safe; a long-lived object isn't).
+                try { socket.close(); } catch (IOException ignored) {}
+                throw e;
+            }
+        }
+
+        /** Opens a persistent TLS connection to {@code peer} (one handshake, reused for all its chunks). */
+        static TlsPeerConnection open(PeerInfo peer) throws IOException {
+            return new TlsPeerConnection(TLSHelper.createClientSocket(peer.ip, peer.port));
+        }
+
+        @Override
+        public byte[] fetchChunk(String filename, int chunkIndex) throws IOException {
+            Frames.writeMessage(out, new Message(MessageType.CHUNK_REQUEST, new ChunkRequest(filename, chunkIndex)));
             out.flush();
 
-            // Read JSON header line
-            StringBuilder headerLine = new StringBuilder();
-            int b;
-            while ((b = in.read()) != '\n' && b != -1) headerLine.append((char) b);
-            Message resp = Message.fromJson(headerLine.toString());
+            Message resp = Frames.readMessage(in);
+            if (resp == null) throw new EOFException("Peer closed connection before responding");
             ChunkResponse cr = resp.getPayload(ChunkResponse.class);
-
+            if (cr == null) throw new IOException("Malformed chunk response");
             if (!cr.success) throw new IOException("Peer error: " + cr.error);
 
+            // TE.1 bounded framing: never trust the peer's advertised body size — a chunk is at most
+            // CHUNK_SIZE, so a larger (or negative) claim is a protocol violation, not a 2 GB allocation.
+            if (cr.size < 0 || cr.size > Protocol.CHUNK_SIZE) {
+                throw new IOException("Chunk body size out of range: " + cr.size);
+            }
             byte[] data = in.readNBytes(cr.size);
+            if (data.length < cr.size) throw new EOFException("Truncated chunk body");
             if (!FileChunker.verifyChunk(data, cr.checksum)) {
                 throw new IOException("Checksum mismatch for chunk " + chunkIndex);
             }
             return data;
+        }
+
+        @Override
+        public void close() throws IOException {
+            socket.close();
         }
     }
 

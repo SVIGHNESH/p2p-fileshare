@@ -23,13 +23,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Full-stack, real-socket transfer test: a live {@link PeerServer} serves a real file over
- * TLS and the default ({@code tlsDownloadChunk}) {@link DownloadManager} fetcher downloads it
- * end to end. This path was dead before the keystore-generate-if-absent fix - {@code TLSHelper.init}
+ * TLS and the default (persistent-TLS-connection) {@link DownloadManager} downloads it end to
+ * end. This path was dead before the keystore-generate-if-absent fix - {@code TLSHelper.init}
  * threw on a clean checkout, so neither the server socket nor the client handshake could start.
  *
  * <p>One test exercises the entire honest pipeline at once: TLS handshake (generated cert),
- * the request/response framing (TE.1), server-side validation (TE.2/TE.3), and the whole-file
- * SHA-256 verification (T0.4). A second proves T0.4 rejects a mislabeled file over real sockets.
+ * the length-prefixed request/response framing (T0.1/TE.1), server-side validation (TE.2/TE.3),
+ * and the whole-file SHA-256 verification (T0.4). A second proves T0.4 rejects a mislabeled file
+ * over real sockets.
  */
 class PeerServerE2ETest {
 

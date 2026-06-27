@@ -14,8 +14,20 @@ import java.util.function.Supplier;
 /**
  * Runs on every peer — listens for incoming chunk requests from other peers
  * and serves file chunks over an encrypted TLS connection.
+ *
+ * <p>T0.1: a connection is kept open and serves many chunk requests back to back (length-prefixed
+ * framing via {@link Frames}) instead of one-request-then-close, so a downloader pays the TLS
+ * handshake once per peer rather than once per 512 KB chunk.
  */
 public class PeerServer {
+
+    /**
+     * Idle read timeout on a served connection. A persistent connection is held open between chunk
+     * requests; this caps how long a stalled or vanished peer can pin a server thread (slowloris-style
+     * guard, mirroring the tracker's TR.4 read timeout). 60s comfortably spans the gap between a
+     * downloader's successive chunk requests over a live connection.
+     */
+    private static final int IDLE_TIMEOUT_MS = 60_000;
 
     private final int port;
     private final Supplier<java.io.File> sharedFolderProvider;
@@ -56,50 +68,60 @@ public class PeerServer {
 
     private void handleClient(Socket socket) {
         try (socket;
-             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-             DataOutputStream out = new DataOutputStream(socket.getOutputStream())) {
+             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()))) {
 
-            String line = in.readLine();
-            if (line == null) return;
-            Message msg = Message.fromJson(line);
-            if (msg.type != MessageType.CHUNK_REQUEST) return;
+            socket.setSoTimeout(IDLE_TIMEOUT_MS);
 
-            ChunkRequest req = msg.getPayload(ChunkRequest.class);
-            java.io.File sharedFolder = sharedFolderProvider.get();
-            java.io.File file = resolveSharedFile(sharedFolder, req.filename);
-
-            if (file == null) {
-                writeResponse(out, new Message(MessageType.CHUNK_RESPONSE,
-                        new ChunkResponse("File not found")));
-                return;
+            // Serve requests back to back over the one connection until the peer closes it (T0.1).
+            // Frames.readMessage returns null on a clean close at a frame boundary — normal termination.
+            Message msg;
+            while ((msg = Frames.readMessage(in)) != null) {
+                if (msg.type != MessageType.CHUNK_REQUEST) {
+                    // Unknown/garbage frame: reply with a structured error and keep the connection
+                    // open — a single bad request must not tear down a connection serving good ones.
+                    writeResponse(out, new ChunkResponse("Unsupported request type"));
+                    continue;
+                }
+                handleChunkRequest(msg.getPayload(ChunkRequest.class), out);
             }
 
-            // TE.2: a negative or out-of-range chunk index would otherwise reach
-            // FileChunker.readChunk and crash it (negative seek / NegativeArraySizeException),
-            // silently dropping the connection. Reject it with a structured error instead.
-            if (!isValidChunkIndex(req.chunkIndex, file.length())) {
-                writeResponse(out, new Message(MessageType.CHUNK_RESPONSE,
-                        new ChunkResponse("Invalid chunk index: " + req.chunkIndex)));
-                return;
-            }
-
-            byte[] chunk = FileChunker.readChunk(file, req.chunkIndex);
-            String checksum = FileChunker.sha256(chunk);
-            ChunkResponse resp = new ChunkResponse(req.filename, req.chunkIndex, chunk.length, checksum);
-
-            // Send JSON header first, then raw bytes
-            String header = new Message(MessageType.CHUNK_RESPONSE, resp).toJson();
-            out.write(header.getBytes());
-            out.write(chunk);
-            out.flush();
-
+        } catch (EOFException eof) {
+            // Peer disappeared mid-frame; nothing to serve.
         } catch (Exception e) {
             System.err.println("[PeerServer] Client error: " + e.getMessage());
         }
     }
 
-    private void writeResponse(DataOutputStream out, Message msg) throws IOException {
-        out.write(msg.toJson().getBytes());
+    /** Serves a single chunk request onto the (persistent) connection. Never throws on bad input (TE.2/TE.3). */
+    private void handleChunkRequest(ChunkRequest req, DataOutputStream out) throws IOException {
+        java.io.File sharedFolder = sharedFolderProvider.get();
+        java.io.File file = resolveSharedFile(sharedFolder, req.filename);
+
+        if (file == null) {
+            writeResponse(out, new ChunkResponse("File not found"));
+            return;
+        }
+
+        // TE.2: a negative or out-of-range chunk index would otherwise reach FileChunker.readChunk
+        // and crash it (negative seek / NegativeArraySizeException). Reject it with a structured error.
+        if (!isValidChunkIndex(req.chunkIndex, file.length())) {
+            writeResponse(out, new ChunkResponse("Invalid chunk index: " + req.chunkIndex));
+            return;
+        }
+
+        byte[] chunk = FileChunker.readChunk(file, req.chunkIndex);
+        String checksum = FileChunker.sha256(chunk);
+        ChunkResponse resp = new ChunkResponse(req.filename, req.chunkIndex, chunk.length, checksum);
+
+        // Length-prefixed JSON header frame, then the raw chunk bytes (sized by resp.size).
+        Frames.writeMessage(out, new Message(MessageType.CHUNK_RESPONSE, resp));
+        out.write(chunk);
+        out.flush();
+    }
+
+    private void writeResponse(DataOutputStream out, ChunkResponse resp) throws IOException {
+        Frames.writeMessage(out, new Message(MessageType.CHUNK_RESPONSE, resp));
         out.flush();
     }
 
