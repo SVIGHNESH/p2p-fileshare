@@ -29,19 +29,29 @@ public class PeerServer {
     }
 
     public void start() {
-        new Thread(() -> {
-            try {
-                serverSocket = TLSHelper.createServerSocket(port);
-                running = true;
-                System.out.println("[PeerServer] Listening on port " + port + " (TLS)");
-                while (running) {
-                    Socket client = serverSocket.accept();
-                    pool.submit(() -> handleClient(client));
-                }
-            } catch (Exception e) {
-                if (running) System.err.println("[PeerServer] Error: " + e.getMessage());
+        // Bind synchronously so the bound port is known the moment start() returns and a
+        // bind/TLS-init failure surfaces here instead of being swallowed on a background
+        // thread (which left callers believing the server was up). Only the accept loop runs async.
+        try {
+            serverSocket = TLSHelper.createServerSocket(port);
+        } catch (Exception e) {
+            System.err.println("[PeerServer] Failed to start on port " + port + ": " + e.getMessage());
+            return;
+        }
+        running = true;
+        System.out.println("[PeerServer] Listening on port " + getBoundPort() + " (TLS)");
+        new Thread(this::acceptLoop, "peer-server").start();
+    }
+
+    private void acceptLoop() {
+        try {
+            while (running) {
+                Socket client = serverSocket.accept();
+                pool.submit(() -> handleClient(client));
             }
-        }, "peer-server").start();
+        } catch (Exception e) {
+            if (running) System.err.println("[PeerServer] Error: " + e.getMessage());
+        }
     }
 
     private void handleClient(Socket socket) {
@@ -125,4 +135,13 @@ public class PeerServer {
     }
 
     public int getPort() { return port; }
+
+    /**
+     * The actual bound port, valid after {@link #start()} returns successfully. Differs from
+     * {@link #getPort()} when the server was constructed with port 0 (ephemeral), which lets
+     * tests bind a free port and connect to it without racing the accept loop.
+     */
+    public int getBoundPort() {
+        return serverSocket != null ? serverSocket.getLocalPort() : port;
+    }
 }
