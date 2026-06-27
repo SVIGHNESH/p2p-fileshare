@@ -210,7 +210,10 @@ public class TrackerServer {
                 case REGISTER: {
                     RegisterRequest req = msg.getPayload(RegisterRequest.class);
                     if (req == null || !validPort(req.port)) return error("Invalid REGISTER payload");
-                    return registry.register(new PeerInfo(clientIp, req.port, req.files))
+                    // T0.5: carry the peer's advertised public-key fingerprint into the registry so it
+                    // is relayed to downloaders for transfer-connection pinning (PeerRegistry caps its
+                    // length). The IP is still the socket source (TR.2), never the payload.
+                    return registry.register(new PeerInfo(clientIp, req.port, req.files, req.keyId))
                             ? new Message(MessageType.HEARTBEAT, "OK")
                             : error("Registry at capacity");
                 }

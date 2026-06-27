@@ -1,5 +1,6 @@
 package com.p2p.core.tracker;
 
+import com.p2p.core.crypto.TLSHelper;
 import com.p2p.core.protocol.Protocol;
 import com.p2p.core.protocol.Protocol.*;
 
@@ -25,9 +26,12 @@ public class TrackerClient {
 
     public boolean register(String myIp, int myPort, List<FileInfo> files) {
         try {
+            // T0.5: advertise this install's public-key fingerprint so downloaders can pin the
+            // transfer connection to it. Null until TLSHelper.init() has run — an unpinned (legacy)
+            // download still works, just without peer authentication.
             Message response = sendAndReceive(new Message(
                     MessageType.REGISTER,
-                    new RegisterRequest(myIp, myPort, files)));
+                    new RegisterRequest(myIp, myPort, files, TLSHelper.getLocalFingerprint())));
             return response != null && response.type != MessageType.ERROR;
         } catch (Exception e) {
             System.err.println("[TrackerClient] Register failed: " + e.getMessage());

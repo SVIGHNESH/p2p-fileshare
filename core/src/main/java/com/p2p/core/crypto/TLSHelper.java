@@ -1,15 +1,25 @@
 package com.p2p.core.crypto;
 
+import com.p2p.core.chunking.FileChunker;
+
 import javax.net.ssl.*;
 import java.io.*;
 import java.nio.file.*;
 import java.security.*;
+import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 
 public class TLSHelper {
 
     private static SSLContext serverContext;
     private static SSLContext clientContext;
+
+    /**
+     * T0.5: SHA-256 (hex) of this install's TLS public key — its stable peer identity. Computed
+     * once at {@link #init} time from the keystore and advertised to the tracker (via
+     * {@link com.p2p.core.tracker.TrackerClient}) so downloaders can pin transfer connections to it.
+     */
+    private static volatile String localFingerprint;
 
     private static final String KEYSTORE_PASS = "p2pshare";
     private static final String KEYSTORE_FILE = "keystore.p12";
@@ -66,12 +76,18 @@ public class TLSHelper {
     static synchronized void resetForTest() {
         serverContext = null;
         clientContext = null;
+        localFingerprint = null;
     }
 
     private static void initContexts(KeyStore ks) throws Exception {
         KeyManagerFactory kmf = KeyManagerFactory.getInstance(
                 KeyManagerFactory.getDefaultAlgorithm());
         kmf.init(ks, KEYSTORE_PASS.toCharArray());
+
+        // T0.5: derive this install's stable identity from its own public key. Hashing the
+        // SubjectPublicKeyInfo (getPublicKey().getEncoded()) rather than the whole certificate keeps
+        // the identity stable even if the cert were ever regenerated around the same key.
+        localFingerprint = fingerprintOf(ks.getCertificate(KEY_ALIAS));
 
         TrustManager[] trustAll = new TrustManager[]{
             new X509TrustManager() {
@@ -98,11 +114,71 @@ public class TLSHelper {
         return ss;
     }
 
+    /**
+     * This install's stable public-key identity — SHA-256 (hex) of its TLS public key (T0.5), or
+     * {@code null} if {@link #init} has not run / the keystore holds no key entry. A peer advertises
+     * this to the tracker so downloaders can pin transfer connections to it.
+     */
+    public static String getLocalFingerprint() {
+        return localFingerprint;
+    }
+
     public static SSLSocket createClientSocket(String host, int port) throws IOException {
+        return createClientSocket(host, port, null);
+    }
+
+    /**
+     * Opens a TLS client socket and, when {@code expectedFingerprint} is non-blank, <b>pins</b> the
+     * peer's identity to it (T0.5): after the handshake the peer's leaf certificate public-key
+     * fingerprint must equal {@code expectedFingerprint}, otherwise the socket is closed and an
+     * {@link SSLPeerUnverifiedException} is thrown. This turns the trust-all transport into one that
+     * actually authenticates the peer against the key the tracker advertised, so a LAN man-in-the-middle
+     * presenting any other certificate is rejected before a single application byte is sent.
+     *
+     * <p>A {@code null}/blank fingerprint keeps the legacy behaviour (encryption only, no pinning) for
+     * peers that advertise no key. <b>Note:</b> the advertised fingerprint is only as trustworthy as the
+     * channel that carried it; the tracker is still plaintext (TR.6), so a tracker-path attacker could
+     * substitute the fingerprint. This slice closes the peer-connection MITM; TR.6 closes the rest.
+     */
+    public static SSLSocket createClientSocket(String host, int port, String expectedFingerprint)
+            throws IOException {
         if (clientContext == null) throw new IllegalStateException("TLSHelper.init() not called");
         SSLSocket s = (SSLSocket) clientContext
                 .getSocketFactory().createSocket(host, port);
         s.startHandshake();
+        if (expectedFingerprint != null && !expectedFingerprint.isBlank()) {
+            verifyPinnedIdentity(s, expectedFingerprint);
+        }
         return s;
+    }
+
+    /** Closes {@code s} and throws if the peer's key fingerprint does not match the pin. */
+    private static void verifyPinnedIdentity(SSLSocket s, String expectedFingerprint) throws IOException {
+        String actual;
+        try {
+            Certificate[] chain = s.getSession().getPeerCertificates();
+            if (chain == null || chain.length == 0) {
+                throw new SSLPeerUnverifiedException("peer presented no certificate");
+            }
+            actual = fingerprintOf(chain[0]);
+        } catch (SSLPeerUnverifiedException e) {
+            closeQuietly(s);
+            throw e;
+        }
+        if (actual == null || !expectedFingerprint.equalsIgnoreCase(actual)) {
+            closeQuietly(s);
+            throw new SSLPeerUnverifiedException(
+                    "peer key fingerprint mismatch (expected " + expectedFingerprint + ", got " + actual + ")");
+        }
+    }
+
+    /** SHA-256 (hex) of a certificate's public key (SubjectPublicKeyInfo), or {@code null}. */
+    private static String fingerprintOf(Certificate cert) {
+        if (cert == null) return null;
+        return FileChunker.sha256(cert.getPublicKey().getEncoded());
+    }
+
+    private static void closeQuietly(Closeable c) {
+        if (c != null) try { c.close(); } catch (IOException ignored) {}
     }
 }

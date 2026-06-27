@@ -11,6 +11,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -104,6 +105,24 @@ class PeerRegistryTest {
         Set<String> names = registry.getAllFilenames();
         assertEquals(Set.of(atLimit, "ok.txt"), names,
                 "names over the length cap are dropped; one exactly at the cap survives");
+    }
+
+    // ── T0.5: relay the peer's public-key fingerprint, but cap its length ──────
+
+    @Test
+    void registerRelaysAValidKeyIdAndDropsAnOverLongOne() {
+        PeerRegistry registry = new PeerRegistry();
+        String validKey = "a".repeat(64); // a plausible SHA-256 fingerprint
+        registry.register(new PeerInfo("10.2.0.1", 9001,
+                new ArrayList<>(List.of(named("a.bin"))), validKey));
+        String tooLong = "b".repeat(PeerRegistry.MAX_KEYID_LENGTH + 1);
+        registry.register(new PeerInfo("10.2.0.2", 9001,
+                new ArrayList<>(List.of(named("b.bin"))), tooLong));
+
+        assertEquals(validKey, registry.findPeersWithFile("a.bin").get(0).keyId,
+                "a valid keyId must be relayed unchanged so downloaders can pin to it");
+        assertNull(registry.findPeersWithFile("b.bin").get(0).keyId,
+                "an over-long keyId is dropped, not relayed");
     }
 
     @Test

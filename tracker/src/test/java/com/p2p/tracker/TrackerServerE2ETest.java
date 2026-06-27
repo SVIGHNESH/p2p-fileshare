@@ -113,6 +113,23 @@ class TrackerServerE2ETest {
                 "UNREGISTER keyed on the socket IP must remove the peer");
     }
 
+    // ── T0.5: the tracker relays the peer's advertised key fingerprint ─────────
+
+    @Test
+    void registerRelaysThePeerKeyIdToQueriers() throws IOException {
+        String keyId = "deadbeef".repeat(8); // a 64-char hex fingerprint
+        FileInfo file = new FileInfo("clip.mov", 2_000_000, 4, "checksum");
+        RegisterRequest reg = new RegisterRequest("ignored", 9100, new ArrayList<>(List.of(file)), keyId);
+        Message regResp = roundTrip(new Message(MessageType.REGISTER, reg));
+        assertEquals(MessageType.HEARTBEAT, regResp.type, "REGISTER with a keyId must be acknowledged");
+
+        PeerListResponse plr = roundTrip(new Message(MessageType.QUERY, new QueryRequest("clip.mov")))
+                .getPayload(PeerListResponse.class);
+        assertEquals(1, plr.peers.size(), "the registered peer must be discoverable");
+        assertEquals(keyId, plr.peers.get(0).keyId,
+                "the tracker must relay the registering peer's keyId so downloaders can pin to it");
+    }
+
     // ── TR.3: a poisoned file list must not break the query path ──────────────
 
     @Test

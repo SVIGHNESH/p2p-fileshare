@@ -17,6 +17,9 @@ public class PeerRegistry {
     public static final int MAX_PEERS = 10_000;
     public static final int MAX_FILES_PER_PEER = 2048;
     public static final int MAX_FILENAME_LENGTH = 512;
+    // T0.5/TR.4: a legitimate key fingerprint is a 64-char hex SHA-256; cap generously and drop
+    // anything longer so a peer cannot smuggle an unbounded string through the relayed keyId field.
+    public static final int MAX_KEYID_LENGTH = 128;
 
     private final ConcurrentHashMap<String, PeerRecord> peers = new ConcurrentHashMap<>();
 
@@ -42,6 +45,7 @@ public class PeerRegistry {
         // would otherwise NPE and break discovery for every querying client.
         // TR.4: also cap files-per-peer and filename length to bound the registry footprint.
         peer.files = sanitizeFiles(peer.files);
+        peer.keyId = sanitizeKeyId(peer.keyId);
         // TR.4: stop admitting new peers past the cap (existing peers may still update in place).
         if (!peers.containsKey(key) && peers.size() >= MAX_PEERS) {
             System.out.println("[Registry] Rejected new peer (registry full): " + key);
@@ -63,6 +67,12 @@ public class PeerRegistry {
             if (clean.size() >= MAX_FILES_PER_PEER) break;       // TR.4: cap files per peer
         }
         return clean;
+    }
+
+    /** T0.5: drop a null/blank or over-long keyId so only a plausible fingerprint is relayed. */
+    private static String sanitizeKeyId(String keyId) {
+        if (keyId == null || keyId.isBlank() || keyId.length() > MAX_KEYID_LENGTH) return null;
+        return keyId;
     }
 
     public void unregister(String ip, int port) {

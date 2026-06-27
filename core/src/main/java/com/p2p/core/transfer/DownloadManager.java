@@ -527,9 +527,15 @@ public class DownloadManager {
             }
         }
 
-        /** Opens a persistent TLS connection to {@code peer} (one handshake, reused for all its chunks). */
+        /**
+         * Opens a persistent TLS connection to {@code peer} (one handshake, reused for all its chunks).
+         * T0.5: when the tracker advertised the peer's public-key fingerprint ({@link PeerInfo#keyId}),
+         * the connection is pinned to it — a peer (or MITM) presenting a different certificate fails the
+         * pin check at handshake time, so {@code open} throws and T0.3 fails the chunk over to a healthy
+         * peer rather than downloading from an impostor. A null/blank keyId is unpinned (legacy peers).
+         */
         static TlsPeerConnection open(PeerInfo peer) throws IOException {
-            return new TlsPeerConnection(TLSHelper.createClientSocket(peer.ip, peer.port));
+            return new TlsPeerConnection(TLSHelper.createClientSocket(peer.ip, peer.port, peer.keyId));
         }
 
         @Override
