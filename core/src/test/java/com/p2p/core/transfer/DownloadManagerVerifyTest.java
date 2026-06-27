@@ -112,6 +112,7 @@ class DownloadManagerVerifyTest {
         FileReassembler fr = new FileReassembler(out, CHUNKS);
         for (int i = 0; i < CHUNKS; i++) fr.writeChunk(i, sliceOf(corrupt, i));
         fr.saveState();
+        fr.close();
         assertTrue(metaOf(out).exists());
 
         DownloadManager dm = new DownloadManager((peer, filename, chunkIndex) -> {

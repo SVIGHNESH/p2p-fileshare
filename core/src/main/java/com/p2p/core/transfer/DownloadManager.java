@@ -38,6 +38,15 @@ public class DownloadManager {
     /** Upper bound on concurrent chunk workers per download; the effective count is also capped by peer count. */
     private static final int MAX_CHUNK_WORKERS_PER_DOWNLOAD = 8;
 
+    /**
+     * TE.4: how often the resume {@code .meta} is persisted while downloading. Persisting after every
+     * single chunk meant one atomic temp-file-write+rename per chunk (thousands for a large file); the
+     * resume contract only needs to bound how much progress a crash can lose. We snapshot every Nth
+     * received chunk and force one final save after the workers join, so a crash re-fetches at most
+     * N-1 chunks — never corruption, since the write itself is atomic.
+     */
+    private static final int SAVE_STATE_EVERY_N_CHUNKS = 32;
+
     public enum DownloadState { QUEUED, CONNECTING, DOWNLOADING, VERIFYING, COMPLETE, FAILED, PAUSED }
 
     /**
@@ -154,6 +163,7 @@ public class DownloadManager {
     }
 
     private void executeDownload(DownloadTask task) {
+        FileReassembler fr = null;
         try {
             int totalChunks = FileChunker.getTotalChunks(task.fileSize);
             task.state = DownloadState.CONNECTING;
@@ -165,7 +175,7 @@ public class DownloadManager {
                 reassembler = new FileReassembler(task.outputFile, totalChunks);
                 task.outputFile.getParentFile().mkdirs();
             }
-            final FileReassembler fr = reassembler;
+            fr = reassembler;
 
             // Fetch any still-missing chunks. A resumed download whose .meta already
             // reports every slot filled skips straight to verification (which the old
@@ -181,6 +191,11 @@ public class DownloadManager {
 
                 fetchMissingChunks(task, fr, missing);
             }
+
+            // TE.4: release the write channel now — this flushes all chunk writes to disk so the
+            // whole-file hash below reads the complete file, and frees the handle so the
+            // mismatch path's outputFile.delete() succeeds (notably on Windows).
+            fr.close();
 
             if (!fr.isComplete()) {
                 fail(task, "Some chunks could not be downloaded from any available peer. Try again to resume.");
@@ -226,6 +241,7 @@ public class DownloadManager {
         } catch (Exception e) {
             fail(task, e.getMessage());
         } finally {
+            closeQuietly(fr); // idempotent; covers the exception path where close() above was skipped
             activeTasks.remove(task.filename);
         }
     }
@@ -251,6 +267,7 @@ public class DownloadManager {
         Set<String> deadPeers = ConcurrentHashMap.newKeySet();
         ConcurrentHashMap<String, AtomicInteger> peerFailures = new ConcurrentHashMap<>();
         AtomicInteger peerCursor = new AtomicInteger();
+        AtomicInteger writeCounter = new AtomicInteger();
 
         // Cap parallelism by peer count: pre-pipelining, one in-flight request per peer is the
         // right shape, and it keeps any one download from monopolizing the shared chunk pool.
@@ -260,17 +277,22 @@ public class DownloadManager {
         List<Future<?>> workers = new ArrayList<>(workerCount);
         for (int w = 0; w < workerCount; w++) {
             workers.add(chunkPool.submit(() ->
-                    drainChunkQueue(task, fr, queue, deadPeers, peerFailures, peerCursor)));
+                    drainChunkQueue(task, fr, queue, deadPeers, peerFailures, peerCursor, writeCounter)));
         }
         for (Future<?> f : workers) {
             try { f.get(); } catch (Exception ignored) {}
         }
+
+        // TE.4: persist the final bitmap once the workers have joined. The in-loop save is throttled,
+        // so without this a clean stop right after the last chunk would leave the .meta lagging and a
+        // resume would needlessly re-fetch the tail. Best-effort: a failure here only costs re-fetch.
+        try { fr.saveState(); } catch (IOException ignored) {}
     }
 
     /** One chunk-fetch worker: drains the shared queue, failing over and requeuing as needed. */
     private void drainChunkQueue(DownloadTask task, FileReassembler fr, Queue<ChunkWork> queue,
                                  Set<String> deadPeers, ConcurrentHashMap<String, AtomicInteger> peerFailures,
-                                 AtomicInteger peerCursor) {
+                                 AtomicInteger peerCursor, AtomicInteger writeCounter) {
         // Thread-confined: this worker keeps one open connection per peer and reuses it across every
         // chunk it pulls for that peer (T0.1), so the TLS handshake is paid once per peer, not once per
         // chunk. The map is local to this thread, so no connection is ever touched concurrently.
@@ -295,7 +317,9 @@ public class DownloadManager {
                     if (data == null) throw new IOException("peer returned no data");
                     fr.writeChunk(work.index, data);
                     task.progress = fr.getProgress();
-                    fr.saveState();
+                    // TE.4: snapshot resume state periodically rather than after every chunk; the
+                    // final state is force-saved once the workers join (see fetchMissingChunks).
+                    if (writeCounter.incrementAndGet() % SAVE_STATE_EVERY_N_CHUNKS == 0) fr.saveState();
                     notifyProgress(task);
                 } catch (Exception e) {
                     // A failure can leave the stream mid-frame, so drop and close this peer's connection;
@@ -315,8 +339,8 @@ public class DownloadManager {
         }
     }
 
-    private static void closeQuietly(PeerConnection conn) {
-        if (conn != null) try { conn.close(); } catch (IOException ignored) {}
+    private static void closeQuietly(Closeable c) {
+        if (c != null) try { c.close(); } catch (IOException ignored) {}
     }
 
     /**

@@ -29,6 +29,7 @@ class ChunkerReassemblerRoundTripTest {
         for (int i = 0; i < total; i++) {
             r.writeChunk(i, FileChunker.readChunk(source, i));
         }
+        r.close(); // flush + release the write channel before reading the file back
 
         assertTrue(r.isComplete());
         assertEquals(total, r.receivedCount());
@@ -50,6 +51,7 @@ class ChunkerReassemblerRoundTripTest {
         for (int i : new int[]{2, 0, 1}) {
             r.writeChunk(i, FileChunker.readChunk(source, i));
         }
+        r.close();
 
         assertTrue(r.isComplete());
         assertArrayEquals(data, Files.readAllBytes(out.toPath()));
@@ -64,6 +66,7 @@ class ChunkerReassemblerRoundTripTest {
         FileReassembler r = new FileReassembler(out, 3);
         r.writeChunk(0, FileChunker.readChunk(source, 0));
         r.writeChunk(2, FileChunker.readChunk(source, 2));
+        r.close();
 
         assertFalse(r.isComplete());
         assertEquals(2, r.receivedCount());
@@ -82,6 +85,7 @@ class ChunkerReassemblerRoundTripTest {
         first.writeChunk(0, FileChunker.readChunk(source, 0));
         first.writeChunk(2, FileChunker.readChunk(source, 2));
         first.saveState();
+        first.close(); // release the write channel before the resumed instance opens its own
 
         FileReassembler resumed = FileReassembler.loadState(out);
         assertNotNull(resumed);
@@ -91,8 +95,11 @@ class ChunkerReassemblerRoundTripTest {
         assertTrue(resumed.isChunkReceived(2));
         assertArrayEquals(new int[]{1}, resumed.missingChunks());
 
-        // Finish the download on the resumed instance and confirm correctness.
+        // Finish the download on the resumed instance and confirm correctness. The partial file
+        // written by `first` (chunks 0 and 2) must survive the resumed instance opening the channel —
+        // a truncating open would zero it and this byte-identical assertion would fail.
         resumed.writeChunk(1, FileChunker.readChunk(source, 1));
+        resumed.close();
         assertTrue(resumed.isComplete());
         assertArrayEquals(data, Files.readAllBytes(out.toPath()));
 
