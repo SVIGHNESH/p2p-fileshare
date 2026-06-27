@@ -56,11 +56,20 @@ public class PeerServer {
 
             ChunkRequest req = msg.getPayload(ChunkRequest.class);
             java.io.File sharedFolder = sharedFolderProvider.get();
-            java.io.File file = new java.io.File(sharedFolder, req.filename);
+            java.io.File file = resolveSharedFile(sharedFolder, req.filename);
 
-            if (!file.exists() || !file.getCanonicalPath().startsWith(sharedFolder.getCanonicalPath())) {
+            if (file == null) {
                 writeResponse(out, new Message(MessageType.CHUNK_RESPONSE,
                         new ChunkResponse("File not found")));
+                return;
+            }
+
+            // TE.2: a negative or out-of-range chunk index would otherwise reach
+            // FileChunker.readChunk and crash it (negative seek / NegativeArraySizeException),
+            // silently dropping the connection. Reject it with a structured error instead.
+            if (!isValidChunkIndex(req.chunkIndex, file.length())) {
+                writeResponse(out, new Message(MessageType.CHUNK_RESPONSE,
+                        new ChunkResponse("Invalid chunk index: " + req.chunkIndex)));
                 return;
             }
 
@@ -82,6 +91,31 @@ public class PeerServer {
     private void writeResponse(DataOutputStream out, Message msg) throws IOException {
         out.write(msg.toJson().getBytes());
         out.flush();
+    }
+
+    /**
+     * Resolves a requested filename to an existing regular file strictly inside the shared
+     * folder, or returns {@code null} if it is missing, not a file, or escapes the folder
+     * (TE.3 path-traversal guard).
+     *
+     * <p>The canonical-path prefix check MUST include a trailing {@link File#separator}.
+     * Comparing bare canonical paths - the previous {@code startsWith(sharedFolder.getCanonicalPath())}
+     * - lets a sibling directory slip through: with a shared folder {@code .../share}, a request for
+     * {@code ../share-secret/x} canonicalizes to {@code .../share-secret/x}, which {@code startsWith}
+     * {@code .../share} and was wrongly served. Requiring {@code .../share} + separator rejects it.
+     */
+    static java.io.File resolveSharedFile(java.io.File sharedFolder, String filename) throws IOException {
+        if (filename == null || filename.isEmpty()) return null;
+        java.io.File file = new java.io.File(sharedFolder, filename);
+        if (!file.exists() || !file.isFile()) return null;
+        String base = sharedFolder.getCanonicalPath();
+        String canonical = file.getCanonicalPath();
+        return canonical.startsWith(base + File.separator) ? file : null;
+    }
+
+    /** True if {@code chunkIndex} addresses a real chunk of a file of {@code fileSize} bytes (TE.2). */
+    static boolean isValidChunkIndex(int chunkIndex, long fileSize) {
+        return chunkIndex >= 0 && chunkIndex < FileChunker.getTotalChunks(fileSize);
     }
 
     public void stop() {
