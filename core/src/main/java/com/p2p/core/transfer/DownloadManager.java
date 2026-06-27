@@ -143,6 +143,23 @@ public class DownloadManager {
             listeners.remove(l);
         }
 
+        /**
+         * TE.6 cancellation flag. Set by {@link DownloadManager#cancel} and polled by every chunk worker
+         * (at the top of its drain loop) and by the coordinator after the workers join, so a cancelled
+         * download stops pulling new chunks promptly and winds down to {@link DownloadState#PAUSED}
+         * (resume state is preserved) rather than running to completion in the background.
+         */
+        volatile boolean cancelled = false;
+        /** TE.6: the per-file coordinator future, tracked so {@link DownloadManager#cancel} can cancel it. */
+        volatile Future<?> coordinatorFuture;
+        /**
+         * TE.6: futures of the currently in-flight chunk-worker tasks. Tracked so {@link DownloadManager#cancel}
+         * can also cancel THEM — before TE.6 cancel() only cancelled the coordinator, leaving the already-
+         * submitted workers fetching to completion. Copy-on-write so the coordinator can populate/clear it
+         * while a cancelling thread iterates it.
+         */
+        final List<Future<?>> chunkFutures = new CopyOnWriteArrayList<>();
+
         public DownloadTask(String filename, long fileSize, File outputFile, List<PeerInfo> peers) {
             this(filename, fileSize, outputFile, peers, null);
         }
@@ -173,7 +190,7 @@ public class DownloadManager {
     // active downloads; chunk fetching is bounded I/O, so a fixed pool caps parallelism.
     private final ExecutorService coordinatorPool = Executors.newCachedThreadPool(daemonFactory("p2p-dl-coord"));
     private final ExecutorService chunkPool = Executors.newFixedThreadPool(8, daemonFactory("p2p-dl-chunk"));
-    private final ConcurrentHashMap<String, Future<?>> activeTasks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, DownloadTask> activeTasks = new ConcurrentHashMap<>();
 
     public DownloadManager() {
         this(TlsPeerConnection::open);
@@ -199,13 +216,41 @@ public class DownloadManager {
     }
 
     public void download(DownloadTask task) {
+        // Defensive reset so a reused/resumed task object starts clean (TE.6).
+        task.cancelled = false;
+        task.chunkFutures.clear();
+        activeTasks.put(task.filename, task);
         Future<?> future = coordinatorPool.submit(() -> executeDownload(task));
-        activeTasks.put(task.filename, future);
+        task.coordinatorFuture = future;
     }
 
+    /**
+     * Cancels an in-flight download (TE.6). Before this fix {@code cancel} only cancelled the per-file
+     * coordinator future, so the chunk-worker tasks already submitted to {@link #chunkPool} kept fetching
+     * to completion in the background — a "cancelled" download actually finished. Now we:
+     * <ol>
+     *   <li>set {@link DownloadTask#cancelled} (volatile) <b>first</b>, so a worker between chunks sees it
+     *       at its next queue poll and stops without pulling more work;</li>
+     *   <li>cancel every tracked chunk-worker future <i>and</i> the coordinator, interrupting any worker
+     *       parked in an interruptible blocking wait so it aborts the current chunk promptly.</li>
+     * </ol>
+     * Resume state ({@code .meta}) is preserved, so the partial download can be resumed; the coordinator
+     * routes a cancelled download to {@link DownloadState#PAUSED} rather than FAILED.
+     *
+     * <p><b>Scope:</b> {@code cancel} cannot abort an in-flight TLS socket read — interrupting a worker
+     * blocked in {@code SocketInputStream.read} does not unblock it. Such a worker lingers until its
+     * per-request read timeout ({@code TlsPeerConnection.READ_TIMEOUT_MS}, 30s) elapses, then sees the
+     * flag and stops; it never starts a new chunk. We deliberately do <i>not</i> close connections from
+     * here: the per-worker connection map is thread-confined inside {@link #drainChunkQueue}, and that
+     * confinement is what lets T0.1's reuse run lock-free.
+     */
     public void cancel(String filename) {
-        Future<?> f = activeTasks.remove(filename);
-        if (f != null) f.cancel(true);
+        DownloadTask task = activeTasks.remove(filename);
+        if (task == null) return;
+        task.cancelled = true;
+        for (Future<?> f : task.chunkFutures) f.cancel(true);
+        Future<?> coord = task.coordinatorFuture;
+        if (coord != null) coord.cancel(true);
     }
 
     private void executeDownload(DownloadTask task) {
@@ -236,6 +281,17 @@ public class DownloadManager {
                 }
 
                 fetchMissingChunks(task, fr, missing);
+            }
+
+            // TE.6: a cancel() during the fetch loop stops the workers; wind down to PAUSED (resume state
+            // was already force-saved in fetchMissingChunks) instead of falling through to the
+            // isComplete()==false path, which would mark the user-cancelled download FAILED with a scary
+            // "could not be downloaded" message. We intentionally do NOT close fr here — an fr.close() that
+            // threw would propagate to the catch below and flip the state to FAILED, defeating the point;
+            // the finally block's closeQuietly(fr) releases the channel.
+            if (task.cancelled) {
+                task.state = DownloadState.PAUSED;
+                return;
             }
 
             // TE.4: release the write channel now — this flushes all chunk writes to disk so the
@@ -325,13 +381,17 @@ public class DownloadManager {
 
         List<Future<?>> workers = new ArrayList<>(workerCount);
         for (int w = 0; w < workerCount; w++) {
-            workers.add(chunkPool.submit(() ->
+            Future<?> wf = chunkPool.submit(() ->
                     drainChunkQueue(task, fr, queue, deadPeers, peerFailures, peerCursor, writeCounter,
-                            lastNotifiedPercent)));
+                            lastNotifiedPercent));
+            workers.add(wf);
+            task.chunkFutures.add(wf); // TE.6: so cancel() can interrupt the in-flight fetches
         }
         for (Future<?> f : workers) {
             try { f.get(); } catch (Exception ignored) {}
         }
+        // TE.6: the workers have joined; drop their futures so a late cancel() doesn't act on stale ones.
+        task.chunkFutures.clear();
 
         // TE.4: persist the final bitmap once the workers have joined. The in-loop save is throttled,
         // so without this a clean stop right after the last chunk would leave the .meta lagging and a
@@ -350,7 +410,12 @@ public class DownloadManager {
         Map<String, PeerConnection> connections = new HashMap<>();
         try {
             ChunkWork work;
-            while ((work = queue.poll()) != null) {
+            // TE.6: stop pulling new chunks as soon as the download is cancelled. The flag (volatile, set
+            // before cancel() interrupts us) is the sole exit guard — we deliberately don't also test the
+            // thread's interrupt status, since this worker rides back into the shared chunkPool and must
+            // not carry a set interrupt flag out. A fetch interrupted mid-blocking-wait throws below, the
+            // catch handles it, and the next loop check sees the flag.
+            while (!task.cancelled && (work = queue.poll()) != null) {
                 PeerInfo peer = pickPeer(task.peers, work.triedPeers, deadPeers, peerCursor);
                 if (peer == null) {
                     // No healthy, untried peer left for this chunk — it cannot be recovered. Drop it;
@@ -388,6 +453,9 @@ public class DownloadManager {
             }
         } finally {
             for (PeerConnection conn : connections.values()) closeQuietly(conn);
+            // TE.6: clear any interrupt left by cancel()'s future.cancel(true) so this pooled thread
+            // returns to the shared chunkPool clean, instead of relying on the executor to clear it.
+            Thread.interrupted();
         }
     }
 

@@ -231,10 +231,15 @@ public class SearchView {
         AppState state = AppState.get();
         File outFile = new File(state.getSharedFolder(), file.name);
 
+        // TE.6: a PAUSED task is a cancelled (now genuinely stopped) download, not an in-flight one, so it
+        // must not block re-triggering — the new task resumes from the preserved .meta. (COMPLETE/FAILED
+        // were already excluded; before TE.6 a "cancelled" download kept running and eventually hit one of
+        // those, so PAUSED never actually occurred here.)
         boolean alreadyDownloading = state.downloads.stream()
                 .anyMatch(t -> t.filename.equals(file.name) &&
                         t.state != DownloadManager.DownloadState.COMPLETE &&
-                        t.state != DownloadManager.DownloadState.FAILED);
+                        t.state != DownloadManager.DownloadState.FAILED &&
+                        t.state != DownloadManager.DownloadState.PAUSED);
         if (alreadyDownloading) {
             btn.setText("⬇  Already queued");
             return;
