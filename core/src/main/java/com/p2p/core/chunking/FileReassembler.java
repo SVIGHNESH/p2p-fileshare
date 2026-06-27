@@ -26,6 +26,13 @@ public class FileReassembler implements Closeable {
     private final File outputFile;
     private final int totalChunks;
     private final boolean[] received; // guarded by 'this'
+    /**
+     * Count of {@code true} entries in {@link #received}, maintained incrementally so
+     * {@link #receivedCount()} / {@link #getProgress()} are O(1) instead of an O(n) bitmap scan
+     * on every chunk (TE.5: {@code getProgress()} is polled once per fetched chunk). Guarded by
+     * {@code this} and moved in lockstep with {@link #received} so the two can never disagree.
+     */
+    private int receivedChunks; // guarded by 'this'
 
     /** Lazily opened on the first write; never truncates an existing (partially-resumed) file. */
     private volatile FileChannel channel;
@@ -65,7 +72,12 @@ public class FileReassembler implements Closeable {
     }
 
     private synchronized void markReceived(int chunkIndex) {
-        received[chunkIndex] = true;
+        // Guard so a re-written chunk (e.g. a defensive double write) never double-counts and the
+        // counter stays in lockstep with the bitmap.
+        if (!received[chunkIndex]) {
+            received[chunkIndex] = true;
+            receivedChunks++;
+        }
     }
 
     public synchronized boolean isChunkReceived(int chunkIndex) {
@@ -73,14 +85,11 @@ public class FileReassembler implements Closeable {
     }
 
     public synchronized boolean isComplete() {
-        for (boolean r : received) if (!r) return false;
-        return true;
+        return receivedChunks == totalChunks;
     }
 
     public synchronized int receivedCount() {
-        int count = 0;
-        for (boolean r : received) if (r) count++;
-        return count;
+        return receivedChunks;
     }
 
     public int getTotalChunks() {
@@ -135,7 +144,13 @@ public class FileReassembler implements Closeable {
         try (DataInputStream dis = new DataInputStream(new FileInputStream(meta))) {
             int totalChunks = dis.readInt();
             FileReassembler r = new FileReassembler(outputFile, totalChunks);
-            for (int i = 0; i < totalChunks; i++) r.received[i] = dis.readBoolean();
+            int count = 0;
+            for (int i = 0; i < totalChunks; i++) {
+                boolean b = dis.readBoolean();
+                r.received[i] = b;
+                if (b) count++;
+            }
+            r.receivedChunks = count;
             return r;
         }
     }

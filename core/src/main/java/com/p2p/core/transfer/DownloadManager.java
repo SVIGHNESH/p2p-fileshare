@@ -93,8 +93,17 @@ public class DownloadManager {
         public volatile DownloadState state = DownloadState.QUEUED;
         public volatile String errorMessage;
         public volatile double progress;
+        /**
+         * Progress callback. <b>Invoked off the UI thread</b> (on a download-pool thread), so UI layers
+         * MUST marshal back to their UI thread (e.g. {@code Platform.runLater} / {@code runOnUiThread}).
+         * TE.5: throttled to at most one call per advancing whole percentage point during {@code DOWNLOADING}
+         * — a fast multi-chunk download no longer fires one callback per 512 KB chunk. State transitions
+         * (CONNECTING, VERIFYING) and the terminal 100% update always fire regardless of the throttle.
+         */
         public Consumer<DownloadTask> onProgressUpdate;
+        /** Completion callback; like {@link #onProgressUpdate}, <b>invoked off the UI thread</b> — marshal it. */
         public Consumer<DownloadTask> onComplete;
+        /** Failure callback; like {@link #onProgressUpdate}, <b>invoked off the UI thread</b> — marshal it. */
         public Consumer<DownloadTask> onError;
 
         public DownloadTask(String filename, long fileSize, File outputFile, List<PeerInfo> peers) {
@@ -268,6 +277,9 @@ public class DownloadManager {
         ConcurrentHashMap<String, AtomicInteger> peerFailures = new ConcurrentHashMap<>();
         AtomicInteger peerCursor = new AtomicInteger();
         AtomicInteger writeCounter = new AtomicInteger();
+        // TE.5: last whole percentage point for which a progress callback fired, shared across all
+        // workers of this download so the throttle is global to the download, not per worker.
+        AtomicInteger lastNotifiedPercent = new AtomicInteger(0);
 
         // Cap parallelism by peer count: pre-pipelining, one in-flight request per peer is the
         // right shape, and it keeps any one download from monopolizing the shared chunk pool.
@@ -277,7 +289,8 @@ public class DownloadManager {
         List<Future<?>> workers = new ArrayList<>(workerCount);
         for (int w = 0; w < workerCount; w++) {
             workers.add(chunkPool.submit(() ->
-                    drainChunkQueue(task, fr, queue, deadPeers, peerFailures, peerCursor, writeCounter)));
+                    drainChunkQueue(task, fr, queue, deadPeers, peerFailures, peerCursor, writeCounter,
+                            lastNotifiedPercent)));
         }
         for (Future<?> f : workers) {
             try { f.get(); } catch (Exception ignored) {}
@@ -292,7 +305,8 @@ public class DownloadManager {
     /** One chunk-fetch worker: drains the shared queue, failing over and requeuing as needed. */
     private void drainChunkQueue(DownloadTask task, FileReassembler fr, Queue<ChunkWork> queue,
                                  Set<String> deadPeers, ConcurrentHashMap<String, AtomicInteger> peerFailures,
-                                 AtomicInteger peerCursor, AtomicInteger writeCounter) {
+                                 AtomicInteger peerCursor, AtomicInteger writeCounter,
+                                 AtomicInteger lastNotifiedPercent) {
         // Thread-confined: this worker keeps one open connection per peer and reuses it across every
         // chunk it pulls for that peer (T0.1), so the TLS handshake is paid once per peer, not once per
         // chunk. The map is local to this thread, so no connection is ever touched concurrently.
@@ -320,7 +334,8 @@ public class DownloadManager {
                     // TE.4: snapshot resume state periodically rather than after every chunk; the
                     // final state is force-saved once the workers join (see fetchMissingChunks).
                     if (writeCounter.incrementAndGet() % SAVE_STATE_EVERY_N_CHUNKS == 0) fr.saveState();
-                    notifyProgress(task);
+                    // TE.5: throttle the per-chunk UI callback to at most one per advancing percentage point.
+                    notifyChunkProgress(task, lastNotifiedPercent);
                 } catch (Exception e) {
                     // A failure can leave the stream mid-frame, so drop and close this peer's connection;
                     // a later chunk for the same peer reconnects cleanly. Never retry the same peer for
@@ -444,6 +459,22 @@ public class DownloadManager {
 
     private void notifyProgress(DownloadTask task) {
         if (task.onProgressUpdate != null) task.onProgressUpdate.accept(task);
+    }
+
+    /**
+     * TE.5: emit a per-chunk progress callback only when the whole-percent figure advances, so a
+     * download of thousands of 512 KB chunks fires at most ~100 callbacks instead of one per chunk
+     * (UI callbacks are off-thread and would otherwise flood). {@code lastNotifiedPercent} is shared
+     * across the download's workers; the {@code pct > prev} guard keeps it monotonic and the CAS lets
+     * exactly one worker fire for each advancing percent under concurrency. The terminal 100% update is
+     * sent unconditionally by the COMPLETE path, so a final tail below one percent is never swallowed.
+     */
+    private void notifyChunkProgress(DownloadTask task, AtomicInteger lastNotifiedPercent) {
+        int pct = (int) (task.progress * 100);
+        int prev = lastNotifiedPercent.get();
+        if (pct > prev && lastNotifiedPercent.compareAndSet(prev, pct)) {
+            notifyProgress(task);
+        }
     }
 
     private static ThreadFactory daemonFactory(String prefix) {
