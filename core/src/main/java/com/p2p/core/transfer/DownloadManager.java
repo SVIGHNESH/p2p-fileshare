@@ -3,13 +3,13 @@ package com.p2p.core.transfer;
 import com.p2p.core.chunking.FileChunker;
 import com.p2p.core.chunking.FileReassembler;
 import com.p2p.core.crypto.TLSHelper;
-import com.p2p.core.protocol.Protocol;
 import com.p2p.core.protocol.Protocol.*;
 
 import java.io.*;
 import java.net.Socket;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -20,6 +20,16 @@ import java.util.function.Consumer;
 public class DownloadManager {
 
     public enum DownloadState { QUEUED, CONNECTING, DOWNLOADING, VERIFYING, COMPLETE, FAILED, PAUSED }
+
+    /**
+     * Fetches a single verified chunk from a peer. The default implementation opens
+     * a TLS connection and validates the chunk checksum; tests inject an in-memory
+     * fetcher so the download orchestration can be exercised without sockets.
+     */
+    @FunctionalInterface
+    public interface ChunkFetcher {
+        byte[] fetch(PeerInfo peer, String filename, int chunkIndex) throws IOException;
+    }
 
     public static class DownloadTask {
         public final String filename;
@@ -48,11 +58,28 @@ public class DownloadManager {
         }
     }
 
-    private final ExecutorService pool = Executors.newFixedThreadPool(8);
+    private final ChunkFetcher chunkFetcher;
+    // T0.2: the per-file coordinator blocks on Future.get() while chunk workers do the
+    // actual fetching. They MUST live in separate pools — sharing one pool means that
+    // once concurrent downloads reach the pool size, every thread is a blocked
+    // coordinator and no thread is left to fetch chunks (classic pool-starvation
+    // deadlock). Coordinators are lightweight blockers, so a cached pool scales with
+    // active downloads; chunk fetching is bounded I/O, so a fixed pool caps parallelism.
+    private final ExecutorService coordinatorPool = Executors.newCachedThreadPool(daemonFactory("p2p-dl-coord"));
+    private final ExecutorService chunkPool = Executors.newFixedThreadPool(8, daemonFactory("p2p-dl-chunk"));
     private final ConcurrentHashMap<String, Future<?>> activeTasks = new ConcurrentHashMap<>();
 
+    public DownloadManager() {
+        this(DownloadManager::tlsDownloadChunk);
+    }
+
+    /** Test/seam constructor: inject how a single chunk is fetched. */
+    public DownloadManager(ChunkFetcher chunkFetcher) {
+        this.chunkFetcher = chunkFetcher;
+    }
+
     public void download(DownloadTask task) {
-        Future<?> future = pool.submit(() -> executeDownload(task));
+        Future<?> future = coordinatorPool.submit(() -> executeDownload(task));
         activeTasks.put(task.filename, future);
     }
 
@@ -85,17 +112,16 @@ public class DownloadManager {
             task.state = DownloadState.DOWNLOADING;
 
             // Distribute chunks across available peers in round-robin
-            final FileReassembler finalReassembler = reassembler;
+            final FileReassembler fr = reassembler;
             List<Future<?>> chunkFutures = new CopyOnWriteArrayList<>();
 
             for (int i = 0; i < missing.length; i++) {
                 final int chunkIndex = missing[i];
                 final PeerInfo peer = task.peers.get(i % task.peers.size());
-                final FileReassembler fr = finalReassembler;
 
-                chunkFutures.add(pool.submit(() -> {
+                chunkFutures.add(chunkPool.submit(() -> {
                     try {
-                        byte[] data = downloadChunk(peer, task.filename, chunkIndex);
+                        byte[] data = chunkFetcher.fetch(peer, task.filename, chunkIndex);
                         if (data != null) {
                             fr.writeChunk(chunkIndex, data);
                             task.progress = fr.getProgress();
@@ -116,8 +142,8 @@ public class DownloadManager {
             task.state = DownloadState.VERIFYING;
             notifyProgress(task);
 
-            if (finalReassembler.isComplete()) {
-                finalReassembler.deleteMetaFile();
+            if (fr.isComplete()) {
+                fr.deleteMetaFile();
                 task.state = DownloadState.COMPLETE;
                 task.progress = 1.0;
                 notifyProgress(task);
@@ -136,7 +162,8 @@ public class DownloadManager {
         }
     }
 
-    private byte[] downloadChunk(PeerInfo peer, String filename, int chunkIndex) throws IOException {
+    /** Default fetcher: open a TLS connection, request one chunk, and verify its checksum. */
+    private static byte[] tlsDownloadChunk(PeerInfo peer, String filename, int chunkIndex) throws IOException {
         try (Socket socket = TLSHelper.createClientSocket(peer.ip, peer.port);
              PrintWriter out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream()), true);
              DataInputStream in = new DataInputStream(socket.getInputStream())) {
@@ -167,5 +194,17 @@ public class DownloadManager {
         if (task.onProgressUpdate != null) task.onProgressUpdate.accept(task);
     }
 
-    public void shutdown() { pool.shutdownNow(); }
+    private static ThreadFactory daemonFactory(String prefix) {
+        AtomicInteger n = new AtomicInteger();
+        return r -> {
+            Thread t = new Thread(r, prefix + "-" + n.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        };
+    }
+
+    public void shutdown() {
+        coordinatorPool.shutdownNow();
+        chunkPool.shutdownNow();
+    }
 }
