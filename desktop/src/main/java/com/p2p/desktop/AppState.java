@@ -194,6 +194,7 @@ public class AppState {
                 if (peerServer != null) peerServer.stop();
                 if (downloadManager != null) downloadManager.shutdown();
                 keepAlive.shutdownNow();
+                sharedFilesExecutor.shutdownNow();
                 savePrefs();
             }));
         } catch (Exception e) {
@@ -211,6 +212,19 @@ public class AppState {
     private final java.util.concurrent.ScheduledExecutorService keepAlive =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "tracker-keepalive");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /**
+     * DT.4: serializes the shared-file refresh (folder scan + SHA-256 of every file +
+     * blocking tracker register) onto a single background daemon thread so the FX thread
+     * is never blocked on disk hashing or network I/O. Single-threaded so rapid successive
+     * refreshes (e.g. several Add File clicks) apply in order rather than racing.
+     */
+    private final java.util.concurrent.ExecutorService sharedFilesExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "shared-files-refresh");
                 t.setDaemon(true);
                 return t;
             });
@@ -252,11 +266,27 @@ public class AppState {
         runFx(() -> isConnected.set(ok));
     }
 
+    /**
+     * DT.4: rescans and re-hashes the shared folder, then re-registers with the tracker —
+     * all off the FX thread (was previously run inline by Sharing add/remove/refresh, the
+     * Settings folder browse, and the download-complete callback, blocking the UI on
+     * full-folder SHA-256 + a blocking register). Only the {@link #sharedFiles} update is
+     * marshalled back via {@link #runFx}. Safe to call from the FX thread.
+     */
     public void refreshSharedFiles() {
-        sharedFiles.setAll(buildFileList());
-        if (isConnected.get()) {
-            int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
-            trackerClient.register(myIp, port, sharedFiles);
-        }
+        sharedFilesExecutor.submit(() -> {
+            // Disk scan + SHA-256 of every file happen here, off the FX thread.
+            final List<FileInfo> files = buildFileList();
+            // Mutate the FX-bound ObservableList only on the FX thread.
+            runFx(() -> sharedFiles.setAll(files));
+            // Background control flow branches on the authoritative `connected` flag, not the
+            // FX-bound isConnected property (whose marshalled set may not have run yet). Register
+            // with the freshly built local snapshot — never the live ObservableList the FX thread
+            // is concurrently populating — avoiding the ConcurrentModificationException DT.8 flags.
+            if (connected && trackerClient != null) {
+                int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
+                trackerClient.register(myIp, port, files);
+            }
+        });
     }
 }
