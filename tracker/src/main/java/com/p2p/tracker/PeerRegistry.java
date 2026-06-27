@@ -24,9 +24,22 @@ public class PeerRegistry {
 
     public void register(PeerInfo peer) {
         String key = peer.ip + ":" + peer.port;
+        // TR.3: drop null entries and null/blank-named files at register time so a single peer
+        // cannot poison the registry — an unguarded f.name.equalsIgnoreCase() in findPeersWithFile
+        // would otherwise NPE and break discovery for every querying client.
+        peer.files = sanitizeFiles(peer.files);
         peers.put(key, new PeerRecord(peer));
         System.out.printf("[Registry] Registered %s with %d file(s)%n",
                 key, peer.files != null ? peer.files.size() : 0);
+    }
+
+    private static List<FileInfo> sanitizeFiles(List<FileInfo> files) {
+        if (files == null) return null;
+        List<FileInfo> clean = new ArrayList<>();
+        for (FileInfo f : files) {
+            if (f != null && f.name != null && !f.name.isBlank()) clean.add(f);
+        }
+        return clean;
     }
 
     public void unregister(String ip, int port) {
@@ -40,11 +53,13 @@ public class PeerRegistry {
     }
 
     public List<PeerInfo> findPeersWithFile(String filename) {
+        if (filename == null) return new ArrayList<>();
         long now = System.currentTimeMillis();
         return peers.values().stream()
                 .filter(r -> now - r.lastSeen < HEARTBEAT_TIMEOUT_MS)
                 .filter(r -> r.info.files != null &&
-                        r.info.files.stream().anyMatch(f -> f.name.equalsIgnoreCase(filename)))
+                        r.info.files.stream()
+                                .anyMatch(f -> f != null && f.name != null && f.name.equalsIgnoreCase(filename)))
                 .map(r -> r.info)
                 .collect(Collectors.toList());
     }
@@ -72,7 +87,9 @@ public class PeerRegistry {
     public Set<String> getAllFilenames() {
         Set<String> names = new HashSet<>();
         peers.values().forEach(r -> {
-            if (r.info.files != null) r.info.files.forEach(f -> names.add(f.name));
+            if (r.info.files != null) r.info.files.forEach(f -> {
+                if (f != null && f.name != null && !f.name.isBlank()) names.add(f.name);
+            });
         });
         return names;
     }

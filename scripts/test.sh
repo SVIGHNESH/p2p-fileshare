@@ -83,25 +83,34 @@ if [[ -z "$GSON" ]]; then
 fi
 
 # ── Compile core (main only) so tests run against fresh bytecode ─────────────
+# Each module compiles src/main only (never src/test) — sweeping a src/test tree into a
+# no-JUnit module compile would break it (BT.2 lesson). Tests for all modules land in one
+# $BUILD/test tree and are discovered together by a single --scan-class-path pass.
 info "Compiling core module..."
-CORE_SOURCES="$(mktemp)"; TEST_SOURCES="$(mktemp)"
-trap 'rm -f "$CORE_SOURCES" "$TEST_SOURCES"' EXIT
-mkdir -p "$BUILD/core" "$BUILD/test"
+CORE_SOURCES="$(mktemp)"; TRACKER_SOURCES="$(mktemp)"; TEST_SOURCES="$(mktemp)"
+trap 'rm -f "$CORE_SOURCES" "$TRACKER_SOURCES" "$TEST_SOURCES"' EXIT
+mkdir -p "$BUILD/core" "$BUILD/tracker" "$BUILD/test"
 find "$ROOT/core/src/main" -name "*.java" > "$CORE_SOURCES"
 javac --release 17 -cp "$GSON" -d "$BUILD/core" @"$CORE_SOURCES" || fail "core compilation failed"
 
-# ── Compile tests ────────────────────────────────────────────────────────────
-info "Compiling core tests..."
-find "$ROOT/core/src/test" -name "*.java" > "$TEST_SOURCES"
-[[ -s "$TEST_SOURCES" ]] || fail "No test sources found under core/src/test"
-javac --release 17 -cp "$BUILD/core:$GSON:$JUNIT_JAR" -d "$BUILD/test" @"$TEST_SOURCES" \
+# ── Compile tracker (main only); depends on core + gson ──────────────────────
+info "Compiling tracker module..."
+find "$ROOT/tracker/src/main" -name "*.java" > "$TRACKER_SOURCES"
+javac --release 17 -cp "$BUILD/core:$GSON" -d "$BUILD/tracker" @"$TRACKER_SOURCES" \
+    || fail "tracker compilation failed"
+
+# ── Compile tests (core + tracker src/test) ──────────────────────────────────
+info "Compiling tests..."
+find "$ROOT/core/src/test" "$ROOT/tracker/src/test" -name "*.java" 2>/dev/null > "$TEST_SOURCES"
+[[ -s "$TEST_SOURCES" ]] || fail "No test sources found under core/src/test or tracker/src/test"
+javac --release 17 -cp "$BUILD/core:$BUILD/tracker:$GSON:$JUNIT_JAR" -d "$BUILD/test" @"$TEST_SOURCES" \
     || fail "test compilation failed"
 success "tests compiled"
 
 # ── Run ──────────────────────────────────────────────────────────────────────
-echo -e "${BOLD}Running core test suite...${RESET}"
+echo -e "${BOLD}Running test suite...${RESET}"
 java -jar "$JUNIT_JAR" execute \
-    --class-path "$BUILD/core:$BUILD/test:$GSON" \
+    --class-path "$BUILD/core:$BUILD/tracker:$BUILD/test:$GSON" \
     --scan-class-path="$BUILD/test" \
     --fail-if-no-tests \
     --disable-banner \
