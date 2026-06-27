@@ -24,6 +24,10 @@ p2p-fileshare/
 # Package core into android/libs/p2p-core.jar (run after build.sh)
 ./scripts/build-android-libs.sh
 
+# Run the core JUnit 5 test suite (chunker/reassembler/protocol round-trips)
+# Self-provisions a pinned, checksum-verified junit-console jar into .test-libs/
+./scripts/test.sh
+
 # Run tracker
 ./scripts/run-tracker.sh [port]
 

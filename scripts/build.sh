@@ -67,7 +67,7 @@ mkdir -p "$BUILD/core" "$BUILD/tracker" "$BUILD/desktop"
 
 # ── Core ───────────────────────────────────────────────────────────────────
 info "Compiling core module..."
-find "$ROOT/core/src" -name "*.java" > "$CORE_SOURCES"
+find "$ROOT/core/src/main" -name "*.java" > "$CORE_SOURCES"
 run_javac --release 17 \
     -cp "$GSON" \
     -d "$BUILD/core" \
@@ -77,7 +77,7 @@ success "core compiled"
 
 # ── Tracker ────────────────────────────────────────────────────────────────
 info "Compiling tracker module..."
-find "$ROOT/tracker/src" -name "*.java" > "$TRACKER_SOURCES"
+find "$ROOT/tracker/src/main" -name "*.java" > "$TRACKER_SOURCES"
 run_javac --release 17 \
     -cp "$GSON:$BUILD/core" \
     -d "$BUILD/tracker" \
@@ -99,7 +99,7 @@ success "tracker.jar → build/tracker.jar"
 # ── Desktop ────────────────────────────────────────────────────────────────
 info "Compiling desktop module..."
 cp -r "$ROOT/desktop/src/main/resources/." "$BUILD/desktop/"
-find "$ROOT/desktop/src" -name "*.java" > "$DESKTOP_SOURCES"
+find "$ROOT/desktop/src/main" -name "*.java" > "$DESKTOP_SOURCES"
 run_javac --release 17 \
     --module-path "$FX_MODS" \
     --add-modules javafx.controls,javafx.graphics \
