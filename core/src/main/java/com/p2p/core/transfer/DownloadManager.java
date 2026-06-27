@@ -79,6 +79,24 @@ public class DownloadManager {
         byte[] fetch(PeerInfo peer, String filename, int chunkIndex) throws IOException;
     }
 
+    /**
+     * Multi-listener callback sink (DT.3). The legacy single-{@link Consumer} fields on
+     * {@link DownloadTask} ({@code onProgressUpdate}/{@code onComplete}/{@code onError}) only hold ONE
+     * observer each, so when two UI views both wanted updates for the same task the second assignment
+     * silently clobbered the first — on desktop the Downloads card overwrote the Search button's
+     * callbacks, stranding the button on "Starting..." and skipping its post-complete shared-folder
+     * refresh. Register any number of listeners via {@link DownloadTask#addListener} and every one is
+     * notified. <b>All methods are invoked off the UI thread</b> (on a download-pool thread), so UI
+     * layers must marshal back (e.g. {@code Platform.runLater} / {@code runOnUiThread}). Override only
+     * the events you care about; a listener that throws is isolated and never affects the others or the
+     * download's own state machine.
+     */
+    public interface DownloadListener {
+        default void onProgress(DownloadTask task) {}
+        default void onComplete(DownloadTask task) {}
+        default void onError(DownloadTask task) {}
+    }
+
     public static class DownloadTask {
         public final String filename;
         public final long fileSize;
@@ -105,6 +123,25 @@ public class DownloadManager {
         public Consumer<DownloadTask> onComplete;
         /** Failure callback; like {@link #onProgressUpdate}, <b>invoked off the UI thread</b> — marshal it. */
         public Consumer<DownloadTask> onError;
+
+        /**
+         * Fan-out listener registry (DT.3). Unlike the single-slot {@code onX} consumers above, EVERY
+         * registered listener is notified, so multiple views can observe the same task without
+         * clobbering each other. Copy-on-write so the download thread can iterate it while a UI thread
+         * registers or removes a listener (and so a listener can {@link #removeListener} itself mid-dispatch).
+         */
+        final List<DownloadListener> listeners = new CopyOnWriteArrayList<>();
+
+        /** Registers a listener for this task's progress/completion/error events. Returns {@code this} for chaining. */
+        public DownloadTask addListener(DownloadListener l) {
+            if (l != null) listeners.add(l);
+            return this;
+        }
+
+        /** Removes a previously-registered listener; safe to call from within a listener callback. */
+        public void removeListener(DownloadListener l) {
+            listeners.remove(l);
+        }
 
         public DownloadTask(String filename, long fileSize, File outputFile, List<PeerInfo> peers) {
             this(filename, fileSize, outputFile, peers, null);
@@ -246,7 +283,7 @@ public class DownloadManager {
             task.state = DownloadState.COMPLETE;
             task.progress = 1.0;
             notifyProgress(task);
-            if (task.onComplete != null) task.onComplete.accept(task);
+            notifyComplete(task);
         } catch (Exception e) {
             fail(task, e.getMessage());
         } finally {
@@ -392,7 +429,7 @@ public class DownloadManager {
     private void fail(DownloadTask task, String message) {
         task.state = DownloadState.FAILED;
         task.errorMessage = message;
-        if (task.onError != null) task.onError.accept(task);
+        notifyError(task);
     }
 
     /**
@@ -457,8 +494,44 @@ public class DownloadManager {
         }
     }
 
+    /**
+     * Fans a progress event out to the legacy single-slot {@code onProgressUpdate} consumer AND every
+     * registered {@link DownloadListener} (DT.3). Each invocation is isolated (see {@link #safeRun}) so a
+     * throwing UI callback can neither starve the other observers nor corrupt the download state machine.
+     */
     private void notifyProgress(DownloadTask task) {
-        if (task.onProgressUpdate != null) task.onProgressUpdate.accept(task);
+        safeAccept(task.onProgressUpdate, task);
+        for (DownloadListener l : task.listeners) safeRun(() -> l.onProgress(task));
+    }
+
+    /** Fans a completion event out to the legacy {@code onComplete} consumer and every listener. */
+    private void notifyComplete(DownloadTask task) {
+        safeAccept(task.onComplete, task);
+        for (DownloadListener l : task.listeners) safeRun(() -> l.onComplete(task));
+    }
+
+    /** Fans a failure event out to the legacy {@code onError} consumer and every listener. */
+    private void notifyError(DownloadTask task) {
+        safeAccept(task.onError, task);
+        for (DownloadListener l : task.listeners) safeRun(() -> l.onError(task));
+    }
+
+    private static void safeAccept(Consumer<DownloadTask> cb, DownloadTask task) {
+        if (cb != null) safeRun(() -> cb.accept(task));
+    }
+
+    /**
+     * Isolates a single callback invocation: a UI listener that throws is logged and swallowed rather
+     * than propagating. This matters on the completion path — {@code notifyComplete} fires inside
+     * {@code executeDownload}'s try block, so an unguarded throw would be caught and would flip an
+     * already-succeeded download to FAILED; with the guard, one bad listener affects nothing else.
+     */
+    private static void safeRun(Runnable r) {
+        try {
+            r.run();
+        } catch (Exception e) {
+            System.err.println("[DL] download listener threw: " + e);
+        }
     }
 
     /**

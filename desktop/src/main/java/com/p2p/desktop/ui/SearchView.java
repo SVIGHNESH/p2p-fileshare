@@ -243,15 +243,31 @@ public class SearchView {
         DownloadManager.DownloadTask task = new DownloadManager.DownloadTask(
                 file.name, file.size, outFile, peers, file.checksum);
 
-        task.onProgressUpdate = t -> Platform.runLater(() -> btn.setText("⬇  " + t.getProgressText()));
-        task.onComplete = t -> Platform.runLater(() -> {
-            btn.setText("✓  Done!");
-            btn.setStyle("-fx-background-color: #2C7A45; -fx-text-fill: white; -fx-background-radius: 8;");
-            state.refreshSharedFiles();
-        });
-        task.onError = t -> Platform.runLater(() -> {
-            btn.setText("✗  Failed — click to retry");
-            btn.setStyle("-fx-background-color: #B23B36; -fx-text-fill: white; -fx-background-radius: 8;");
+        // DT.3: register a listener instead of assigning the single-slot callback fields. The
+        // DownloadsView card also observes this same task; under the old single-Consumer model its
+        // assignment silently clobbered this one, so the button stuck on "Starting..." and the
+        // post-complete refreshSharedFiles() never ran. With fan-out both views are notified.
+        // The listener self-removes on the terminal event so the captured button subtree is not
+        // pinned for the process lifetime by the long-lived task in state.downloads.
+        task.addListener(new DownloadManager.DownloadListener() {
+            @Override public void onProgress(DownloadManager.DownloadTask t) {
+                Platform.runLater(() -> btn.setText("⬇  " + t.getProgressText()));
+            }
+            @Override public void onComplete(DownloadManager.DownloadTask t) {
+                t.removeListener(this);
+                Platform.runLater(() -> {
+                    btn.setText("✓  Done!");
+                    btn.setStyle("-fx-background-color: #2C7A45; -fx-text-fill: white; -fx-background-radius: 8;");
+                    state.refreshSharedFiles();
+                });
+            }
+            @Override public void onError(DownloadManager.DownloadTask t) {
+                t.removeListener(this);
+                Platform.runLater(() -> {
+                    btn.setText("✗  Failed — click to retry");
+                    btn.setStyle("-fx-background-color: #B23B36; -fx-text-fill: white; -fx-background-radius: 8;");
+                });
+            }
         });
 
         state.downloads.add(task);

@@ -128,39 +128,50 @@ public class DownloadsView {
         detailRow.getChildren().addAll(progressText, spacer2, cancelBtn);
         card.getChildren().addAll(nameRow, bar, detailRow);
 
-        // Live updates
-        task.onProgressUpdate = t -> Platform.runLater(() -> {
-            bar.setProgress(t.progress);
-            progressText.setText(t.getProgressText());
-            statusLabel.setText(stateText(t.state));
-            statusLabel.setTextFill(stateColor(t.state));
-        });
-        task.onComplete = t -> Platform.runLater(() -> {
-            bar.setProgress(1.0);
-            bar.setStyle("-fx-accent: #46C46A;");
-            statusLabel.setText("✓ Complete");
-            statusLabel.setTextFill(Color.web("#46C46A"));
-            progressText.setText("Download complete — click to open");
-            cancelBtn.setVisible(false);
-            card.setCursor(javafx.scene.Cursor.HAND);
-            card.setStyle(
-                    "-fx-background-color: #0E1F16; -fx-background-radius: 12; " +
-                    "-fx-border-color: #2C5A3F; -fx-border-radius: 12; -fx-border-width: 1;");
+        // Live updates. DT.3: register a listener rather than assigning task.onProgressUpdate/etc.,
+        // so this card and the Search button (which also observes this task) are BOTH notified instead
+        // of the later assignment clobbering the earlier one. The card lives in the Downloads list for
+        // the task's lifetime, so this listener intentionally stays registered (no self-removal).
+        task.addListener(new DownloadManager.DownloadListener() {
+            @Override public void onProgress(DownloadTask t) {
+                Platform.runLater(() -> {
+                    bar.setProgress(t.progress);
+                    progressText.setText(t.getProgressText());
+                    statusLabel.setText(stateText(t.state));
+                    statusLabel.setTextFill(stateColor(t.state));
+                });
+            }
+            @Override public void onComplete(DownloadTask t) {
+                Platform.runLater(() -> {
+                    bar.setProgress(1.0);
+                    bar.setStyle("-fx-accent: #46C46A;");
+                    statusLabel.setText("✓ Complete");
+                    statusLabel.setTextFill(Color.web("#46C46A"));
+                    progressText.setText("Download complete — click to open");
+                    cancelBtn.setVisible(false);
+                    card.setCursor(javafx.scene.Cursor.HAND);
+                    card.setStyle(
+                            "-fx-background-color: #0E1F16; -fx-background-radius: 12; " +
+                            "-fx-border-color: #2C5A3F; -fx-border-radius: 12; -fx-border-width: 1;");
+                });
+            }
+            @Override public void onError(DownloadTask t) {
+                Platform.runLater(() -> {
+                    bar.setStyle("-fx-accent: #E5564E;");
+                    statusLabel.setText("✗ Failed");
+                    statusLabel.setTextFill(Color.web("#E5564E"));
+                    progressText.setText(t.errorMessage != null ? t.errorMessage : "Unknown error");
+                    cancelBtn.setVisible(false);
+                    card.setStyle(
+                            "-fx-background-color: #1F1212; -fx-background-radius: 12; " +
+                            "-fx-border-color: #5A3030; -fx-border-radius: 12; -fx-border-width: 1;");
+                });
+            }
         });
 
         // Click a completed card to open the file (falls back to the shared folder).
         if (task.state == DownloadManager.DownloadState.COMPLETE) card.setCursor(javafx.scene.Cursor.HAND);
         card.setOnMouseClicked(e -> openDownload(task));
-        task.onError = t -> Platform.runLater(() -> {
-            bar.setStyle("-fx-accent: #E5564E;");
-            statusLabel.setText("✗ Failed");
-            statusLabel.setTextFill(Color.web("#E5564E"));
-            progressText.setText(t.errorMessage != null ? t.errorMessage : "Unknown error");
-            cancelBtn.setVisible(false);
-            card.setStyle(
-                    "-fx-background-color: #1F1212; -fx-background-radius: 12; " +
-                    "-fx-border-color: #5A3030; -fx-border-radius: 12; -fx-border-width: 1;");
-        });
 
         return card;
     }
