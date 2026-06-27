@@ -48,8 +48,24 @@ public class AppState {
     public final ObservableList<DownloadManager.DownloadTask> downloads = FXCollections.observableArrayList();
     public final ObservableList<FileInfo> sharedFiles = FXCollections.observableArrayList();
 
+    /**
+     * UI-facing connection flag, written ONLY on the FX thread (via {@link #runFx}).
+     * Background code must never branch on this — it reads the authoritative
+     * {@link #connected} flag instead, since a marshalled set may not have run yet.
+     */
     public final BooleanProperty isConnected = new SimpleBooleanProperty(false);
-    public String myIp = "unknown";
+
+    /** Authoritative connection state read/written by background threads. */
+    private volatile boolean connected = false;
+
+    /**
+     * Network-facing LAN IP. {@code volatile} because it is set on the background
+     * init thread and later read by the keep-alive / discovery / reconnect threads.
+     */
+    public volatile String myIp = "unknown";
+
+    /** FX-thread display mirror of {@link #myIp} for the status bar. */
+    public final StringProperty myIpDisplay = new SimpleStringProperty("detecting...");
 
     public void savePrefs() {
         prefs.put("trackerHost", trackerHost.get());
@@ -98,57 +114,98 @@ public class AppState {
         return files;
     }
 
+    /**
+     * DT.1: non-blocking entry point. All of startup — TLS keygen, the LAN-IP
+     * probe, full-folder SHA-256 hashing, the peer-server bind, and up to three
+     * blocking tracker registrations — runs on a background daemon thread so the
+     * FX thread is free to paint the window immediately. Only writes to live
+     * JavaFX state are marshalled back via {@link #runFx}.
+     */
     public void init() {
-        try { com.p2p.core.crypto.TLSHelper.init(); }
-        catch (Exception e) { System.err.println("[AppState] TLS init failed: " + e.getMessage()); }
+        Thread t = new Thread(this::initBlocking, "appstate-init");
+        t.setDaemon(true);
+        t.start();
+    }
 
-        myIp = detectLanIp();
+    private void initBlocking() {
+        try {
+            try { com.p2p.core.crypto.TLSHelper.init(); }
+            catch (Exception e) { System.err.println("[AppState] TLS init failed: " + e.getMessage()); }
 
-        sharedFiles.setAll(buildFileList());
+            myIp = detectLanIp();
+            final String ip = myIp;
+            runFx(() -> myIpDisplay.set(ip));
 
-        int port = Protocol.DEFAULT_PEER_PORT;
-        peerServer = new PeerServer(port, this::getSharedFolder);
-        peerServer.start();
+            final List<FileInfo> files = buildFileList();
+            runFx(() -> sharedFiles.setAll(files));
 
-        downloadManager = new DownloadManager();
+            int port = Protocol.DEFAULT_PEER_PORT;
+            peerServer = new PeerServer(port, this::getSharedFolder);
+            peerServer.start();
 
-        int tPort = Integer.parseInt(trackerPort.get().isBlank() ? "9000" : trackerPort.get());
-        trackerClient = new TrackerClient(trackerHost.get(), tPort);
+            downloadManager = new DownloadManager();
 
-        if (!trackerHost.get().isBlank()) {
-            isConnected.set(trackerClient.register(myIp, port, sharedFiles));
-        }
+            int tPort = Integer.parseInt(trackerPort.get().isBlank() ? "9000" : trackerPort.get());
+            trackerClient = new TrackerClient(trackerHost.get(), tPort);
 
-        // Try localhost first (common case: tracker and desktop on same machine)
-        if (!isConnected.get()) {
-            trackerClient.setTracker("127.0.0.1", tPort);
-            if (trackerClient.register(myIp, port, sharedFiles)) {
-                trackerHost.set("127.0.0.1");
-                isConnected.set(true);
+            // Use the local `files` snapshot (not the ObservableList, which the FX
+            // thread is concurrently populating) and a local boolean for control
+            // flow — never the marshalled isConnected property, whose set() may not
+            // have run yet.
+            boolean ok = false;
+            String discoveredHost = null;
+            if (!trackerHost.get().isBlank()) {
+                ok = trackerClient.register(myIp, port, files);
+            }
+
+            // Try localhost first (common case: tracker and desktop on same machine)
+            if (!ok) {
+                trackerClient.setTracker("127.0.0.1", tPort);
+                if (trackerClient.register(myIp, port, files)) {
+                    discoveredHost = "127.0.0.1";
+                    ok = true;
+                }
+            }
+
+            connected = ok;
+            final boolean fOk = ok;
+            final String fHost = discoveredHost;
+            runFx(() -> {
+                if (fHost != null) trackerHost.set(fHost);
+                isConnected.set(fOk);
+                if (fHost != null) savePrefs();
+            });
+
+            // Auto-discover tracker if not configured — retry until found or manually connected
+            if (!ok) {
+                discovery = new UDPDiscovery();
+                scheduleDiscovery(discovery, port);
+            }
+
+            // Re-register periodically so the tracker doesn't evict us (90s timeout).
+            keepAlive.scheduleAtFixedRate(() -> {
+                if (connected && trackerClient != null) {
+                    trackerClient.register(myIp, port, new ArrayList<>(sharedFiles));
+                }
+            }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
+
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                if (trackerClient != null) trackerClient.unregister(myIp, port);
+                if (peerServer != null) peerServer.stop();
+                if (downloadManager != null) downloadManager.shutdown();
+                keepAlive.shutdownNow();
                 savePrefs();
-            }
+            }));
+        } catch (Exception e) {
+            // DT.7 (surfacing this in the UI) is out of scope; at minimum don't let
+            // a bind/TLS failure die silently on the background thread.
+            System.err.println("[AppState] init failed: " + e.getMessage());
         }
+    }
 
-        // Auto-discover tracker if not configured — retry until found or manually connected
-        if (!isConnected.get()) {
-            discovery = new UDPDiscovery();
-            scheduleDiscovery(discovery, port);
-        }
-
-        // Re-register periodically so the tracker doesn't evict us (90s timeout).
-        keepAlive.scheduleAtFixedRate(() -> {
-            if (isConnected.get() && trackerClient != null) {
-                trackerClient.register(myIp, port, new ArrayList<>(sharedFiles));
-            }
-        }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            if (trackerClient != null) trackerClient.unregister(myIp, port);
-            if (peerServer != null) peerServer.stop();
-            if (downloadManager != null) downloadManager.shutdown();
-            keepAlive.shutdownNow();
-            savePrefs();
-        }));
+    /** Marshal a state write back onto the JavaFX application thread. */
+    private void runFx(Runnable r) {
+        javafx.application.Platform.runLater(r);
     }
 
     private final java.util.concurrent.ScheduledExecutorService keepAlive =
@@ -159,15 +216,23 @@ public class AppState {
             });
 
     private void scheduleDiscovery(UDPDiscovery disc, int peerPort) {
+        // The callback fires on the discovery thread (DT.2): keep the blocking
+        // network calls here, but marshal every write to live UI state — the
+        // trackerHost/trackerPort properties are bound bidirectionally to the
+        // Settings text fields — onto the FX thread.
         disc.listenForTracker(found -> {
             if (found != null) {
                 String[] parts = found.split(":");
-                trackerHost.set(parts[0]);
-                trackerPort.set(parts[1]);
                 trackerClient.setTracker(parts[0], Integer.parseInt(parts[1]));
-                isConnected.set(trackerClient.register(myIp, peerPort, sharedFiles));
-                savePrefs();
-            } else if (!isConnected.get()) {
+                boolean ok = trackerClient.register(myIp, peerPort, new ArrayList<>(sharedFiles));
+                connected = ok;
+                runFx(() -> {
+                    trackerHost.set(parts[0]);
+                    trackerPort.set(parts[1]);
+                    isConnected.set(ok);
+                    savePrefs();
+                });
+            } else if (!connected) {
                 // Timed out, still not connected — keep retrying. A stale tracker
                 // host saved from a previous network must not stop discovery.
                 scheduleDiscovery(disc, peerPort);
@@ -175,12 +240,16 @@ public class AppState {
         });
     }
 
+    /** Called off the FX thread (Settings "Save" spawns a worker), so the
+     *  isConnected write is marshalled back. */
     public void reconnect() {
-        if (trackerHost.get().isBlank()) return;
+        if (trackerHost.get().isBlank() || trackerClient == null) return;
         int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
         int tPort = Integer.parseInt(trackerPort.get().isBlank() ? "9000" : trackerPort.get());
         trackerClient.setTracker(trackerHost.get(), tPort);
-        isConnected.set(trackerClient.register(myIp, port, sharedFiles));
+        boolean ok = trackerClient.register(myIp, port, new ArrayList<>(sharedFiles));
+        connected = ok;
+        runFx(() -> isConnected.set(ok));
     }
 
     public void refreshSharedFiles() {

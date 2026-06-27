@@ -18,8 +18,6 @@ public class App extends Application {
 
     @Override
     public void start(Stage stage) {
-        AppState.get().init();
-
         stage.setTitle("P2P Share");
         stage.setMinWidth(900);
         stage.setMinHeight(640);
@@ -50,6 +48,10 @@ public class App extends Application {
         scene.getStylesheets().add(getClass().getResource("/css/app.css").toExternalForm());
         stage.setScene(scene);
         stage.show();
+
+        // DT.1: paint the window first, then run the blocking startup off the FX
+        // thread. init() returns immediately; state populates the UI as it lands.
+        AppState.get().init();
     }
 
     private HBox buildHeader() {
@@ -93,9 +95,12 @@ public class App extends Application {
         bar.setPadding(new Insets(8, 20, 8, 20));
         bar.setStyle("-fx-background-color: #0B1015; -fx-border-color: #26313C; -fx-border-width: 1 0 0 0;");
 
-        Label myIpLabel = new Label("Your IP: " + AppState.get().myIp);
+        Label myIpLabel = new Label("Your IP: " + AppState.get().myIpDisplay.get());
         myIpLabel.setTextFill(Color.web("#5E6B77"));
         myIpLabel.setFont(Font.font("System", 11));
+        // DT.1: the real IP is detected on the background init thread; update the
+        // label when it lands (myIpDisplay is set via Platform.runLater).
+        AppState.get().myIpDisplay.addListener((o, ov, nv) -> myIpLabel.setText("Your IP: " + nv));
 
         Label sharedLabel = new Label("Shared folder: " + AppState.get().sharedFolderPath.get());
         sharedLabel.setTextFill(Color.web("#5E6B77"));
