@@ -36,6 +36,12 @@ public class DownloadManager {
         public final long fileSize;
         public final File outputFile;
         public final List<PeerInfo> peers;
+        /**
+         * Advertised whole-file SHA-256 to verify the reassembled file against (T0.4).
+         * Null/blank means the source advertised no checksum, so there is nothing to
+         * verify against and the integrity check is skipped.
+         */
+        public final String expectedChecksum;
         public volatile DownloadState state = DownloadState.QUEUED;
         public volatile String errorMessage;
         public volatile double progress;
@@ -44,10 +50,16 @@ public class DownloadManager {
         public Consumer<DownloadTask> onError;
 
         public DownloadTask(String filename, long fileSize, File outputFile, List<PeerInfo> peers) {
+            this(filename, fileSize, outputFile, peers, null);
+        }
+
+        public DownloadTask(String filename, long fileSize, File outputFile,
+                            List<PeerInfo> peers, String expectedChecksum) {
             this.filename = filename;
             this.fileSize = fileSize;
             this.outputFile = outputFile;
             this.peers = peers;
+            this.expectedChecksum = expectedChecksum;
         }
 
         public String getProgressText() {
@@ -100,66 +112,94 @@ public class DownloadManager {
                 reassembler = new FileReassembler(task.outputFile, totalChunks);
                 task.outputFile.getParentFile().mkdirs();
             }
+            final FileReassembler fr = reassembler;
 
-            int[] missing = reassembler.missingChunks();
-            if (missing.length == 0) {
-                task.state = DownloadState.COMPLETE;
-                reassembler.deleteMetaFile();
-                if (task.onComplete != null) task.onComplete.accept(task);
+            // Fetch any still-missing chunks. A resumed download whose .meta already
+            // reports every slot filled skips straight to verification (which the old
+            // early-return path never did, so a resumed-but-corrupt file slipped through).
+            int[] missing = fr.missingChunks();
+            if (missing.length > 0) {
+                task.state = DownloadState.DOWNLOADING;
+
+                // Distribute chunks across available peers in round-robin
+                List<Future<?>> chunkFutures = new CopyOnWriteArrayList<>();
+                for (int i = 0; i < missing.length; i++) {
+                    final int chunkIndex = missing[i];
+                    final PeerInfo peer = task.peers.get(i % task.peers.size());
+
+                    chunkFutures.add(chunkPool.submit(() -> {
+                        try {
+                            byte[] data = chunkFetcher.fetch(peer, task.filename, chunkIndex);
+                            if (data != null) {
+                                fr.writeChunk(chunkIndex, data);
+                                task.progress = fr.getProgress();
+                                fr.saveState();
+                                notifyProgress(task);
+                            }
+                        } catch (Exception e) {
+                            System.err.println("[DL] Chunk " + chunkIndex + " failed: " + e.getMessage());
+                        }
+                    }));
+                }
+
+                // Wait for all chunks
+                for (Future<?> f : chunkFutures) {
+                    try { f.get(); } catch (Exception ignored) {}
+                }
+            }
+
+            if (!fr.isComplete()) {
+                fail(task, "Some chunks could not be downloaded. Try again to resume.");
                 return;
             }
 
-            task.state = DownloadState.DOWNLOADING;
-
-            // Distribute chunks across available peers in round-robin
-            final FileReassembler fr = reassembler;
-            List<Future<?>> chunkFutures = new CopyOnWriteArrayList<>();
-
-            for (int i = 0; i < missing.length; i++) {
-                final int chunkIndex = missing[i];
-                final PeerInfo peer = task.peers.get(i % task.peers.size());
-
-                chunkFutures.add(chunkPool.submit(() -> {
-                    try {
-                        byte[] data = chunkFetcher.fetch(peer, task.filename, chunkIndex);
-                        if (data != null) {
-                            fr.writeChunk(chunkIndex, data);
-                            task.progress = fr.getProgress();
-                            fr.saveState();
-                            notifyProgress(task);
-                        }
-                    } catch (Exception e) {
-                        System.err.println("[DL] Chunk " + chunkIndex + " failed: " + e.getMessage());
-                    }
-                }));
-            }
-
-            // Wait for all chunks
-            for (Future<?> f : chunkFutures) {
-                try { f.get(); } catch (Exception ignored) {}
-            }
-
+            // T0.4: every chunk slot is filled, but each chunk was only validated against
+            // the serving peer's OWN per-chunk checksum — a peer serving a mislabeled file
+            // passes all of those yet yields a self-consistent set of WRONG bytes. Verify
+            // the whole reassembled file against the advertised SHA-256 before declaring it
+            // complete, so a wrong-but-consistent file is never accepted.
             task.state = DownloadState.VERIFYING;
             notifyProgress(task);
 
-            if (fr.isComplete()) {
-                fr.deleteMetaFile();
-                task.state = DownloadState.COMPLETE;
-                task.progress = 1.0;
-                notifyProgress(task);
-                if (task.onComplete != null) task.onComplete.accept(task);
-            } else {
-                task.state = DownloadState.FAILED;
-                task.errorMessage = "Some chunks could not be downloaded. Try again to resume.";
-                if (task.onError != null) task.onError.accept(task);
+            String expected = task.expectedChecksum;
+            if (expected != null && !expected.isBlank()) {
+                String actual;
+                try {
+                    actual = FileChunker.sha256OfFile(task.outputFile);
+                } catch (IOException e) {
+                    // Could not read the assembled file to hash it — possibly transient.
+                    // Keep the .meta so a retry resumes rather than re-downloading everything.
+                    fail(task, "Could not verify downloaded file: " + e.getMessage());
+                    return;
+                }
+                if (!expected.equalsIgnoreCase(actual)) {
+                    // Definitely the wrong bytes. Drop both the file and its resume state so the
+                    // corruption is neither presented as complete nor re-hashed and re-advertised
+                    // to the tracker from the shared folder. A retry re-fetches from scratch;
+                    // automatic failover to a different peer is T0.3.
+                    fr.deleteMetaFile();
+                    task.outputFile.delete();
+                    fail(task, "Downloaded file failed integrity check (checksum mismatch).");
+                    return;
+                }
             }
+
+            fr.deleteMetaFile();
+            task.state = DownloadState.COMPLETE;
+            task.progress = 1.0;
+            notifyProgress(task);
+            if (task.onComplete != null) task.onComplete.accept(task);
         } catch (Exception e) {
-            task.state = DownloadState.FAILED;
-            task.errorMessage = e.getMessage();
-            if (task.onError != null) task.onError.accept(task);
+            fail(task, e.getMessage());
         } finally {
             activeTasks.remove(task.filename);
         }
+    }
+
+    private void fail(DownloadTask task, String message) {
+        task.state = DownloadState.FAILED;
+        task.errorMessage = message;
+        if (task.onError != null) task.onError.accept(task);
     }
 
     /** Default fetcher: open a TLS connection, request one chunk, and verify its checksum. */

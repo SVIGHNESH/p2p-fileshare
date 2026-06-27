@@ -84,8 +84,14 @@ public class AppState {
             if (f.isFile() && !f.getName().endsWith(".meta")) {
                 int chunks = FileChunker.getTotalChunks(f.length());
                 String checksum;
+                // T0.4: never advertise an empty checksum — a downloader would "verify"
+                // any bytes against it and accept corruption. Skip files we cannot hash.
                 try { checksum = FileChunker.sha256OfFile(f); }
-                catch (Exception e) { checksum = ""; }
+                catch (Exception e) {
+                    System.err.println("[AppState] Skipping unhashable shared file: "
+                            + f.getName() + " (" + e.getMessage() + ")");
+                    continue;
+                }
                 files.add(new FileInfo(f.getName(), f.length(), chunks, checksum));
             }
         }

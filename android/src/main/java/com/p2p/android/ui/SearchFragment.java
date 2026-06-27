@@ -164,7 +164,7 @@ public class SearchFragment extends Fragment {
         AppState state = AppState.get(requireContext());
         File outFile = new File(state.getSharedFolder(), fi.name);
         DownloadManager.DownloadTask task = new DownloadManager.DownloadTask(
-                fi.name, fi.size, outFile, peers);
+                fi.name, fi.size, outFile, peers, fi.checksum);
 
         task.onProgressUpdate = t -> requireActivity().runOnUiThread(() ->
                 btn.setText(t.getProgressText()));

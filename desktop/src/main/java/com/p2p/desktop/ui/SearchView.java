@@ -241,7 +241,7 @@ public class SearchView {
         }
 
         DownloadManager.DownloadTask task = new DownloadManager.DownloadTask(
-                file.name, file.size, outFile, peers);
+                file.name, file.size, outFile, peers, file.checksum);
 
         task.onProgressUpdate = t -> Platform.runLater(() -> btn.setText("⬇  " + t.getProgressText()));
         task.onComplete = t -> Platform.runLater(() -> {
