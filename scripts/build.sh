@@ -47,6 +47,7 @@ javac --release 17 \
     -cp "$GSON" \
     -d "$BUILD/core" \
     @/tmp/p2p_core_sources.txt 2>&1 | grep -v "^Note:" || true
+[[ -d "$ROOT/core/src/main/resources" ]] && cp -r "$ROOT/core/src/main/resources/." "$BUILD/core/"
 success "core compiled"
 
 # ── Tracker ────────────────────────────────────────────────────────────────

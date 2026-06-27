@@ -93,7 +93,10 @@ public class TrackerServer {
             }
             case QUERY: {
                 QueryRequest req = msg.getPayload(QueryRequest.class);
-                List<PeerInfo> peers = registry.findPeersWithFile(req.filename);
+                // Blank filename = browse: return every active peer with its full file list.
+                List<PeerInfo> peers = (req.filename == null || req.filename.isBlank())
+                        ? registry.getAllActivePeers()
+                        : registry.findPeersWithFile(req.filename);
                 return new Message(MessageType.PEER_LIST,
                         new PeerListResponse(req.filename, peers));
             }

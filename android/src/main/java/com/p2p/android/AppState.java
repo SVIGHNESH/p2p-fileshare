@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Environment;
 import com.p2p.core.chunking.FileChunker;
+import com.p2p.core.crypto.TLSHelper;
 import com.p2p.core.discovery.UDPDiscovery;
 import com.p2p.core.protocol.Protocol;
 import com.p2p.core.protocol.Protocol.FileInfo;
@@ -61,8 +62,10 @@ public class AppState {
     }
 
     public void init() {
-        try { myIp = InetAddress.getLocalHost().getHostAddress(); }
-        catch (Exception e) { myIp = "127.0.0.1"; }
+        try { TLSHelper.init(new java.io.File(context.getFilesDir(), "p2pshare")); }
+        catch (Exception e) { android.util.Log.e("P2PShare", "TLS init failed", e); }
+
+        myIp = detectLanIp();
 
         getSharedFolder().mkdirs();
         refreshSharedFiles();
@@ -77,24 +80,82 @@ public class AppState {
         }
 
         if (!isConnected) {
+            acquireMulticastLock();
             discovery = new UDPDiscovery();
-            discovery.listenForTracker(found -> {
-                if (found != null) {
-                    String[] parts = found.split(":");
-                    trackerHost = parts[0];
-                    trackerPort = Integer.parseInt(parts[1]);
-                    trackerClient.setTracker(trackerHost, trackerPort);
-                    isConnected = trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, sharedFiles);
-                    savePrefs();
-                }
-            });
+            startDiscovery();
+        }
+
+        // Re-register periodically so the tracker doesn't evict us (90s timeout).
+        keepAlive.scheduleAtFixedRate(() -> {
+            if (isConnected && trackerClient != null) {
+                trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, new ArrayList<>(sharedFiles));
+            }
+        }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    private android.net.wifi.WifiManager.MulticastLock multicastLock;
+
+    /**
+     * Android's Wi-Fi hardware drops multicast packets unless an app holds a
+     * MulticastLock. Without this, UDP tracker discovery never receives the
+     * tracker's announcement. Requires CHANGE_WIFI_MULTICAST_STATE permission.
+     */
+    private void acquireMulticastLock() {
+        try {
+            if (multicastLock != null && multicastLock.isHeld()) return;
+            android.net.wifi.WifiManager wifi = (android.net.wifi.WifiManager)
+                    context.getSystemService(Context.WIFI_SERVICE);
+            if (wifi == null) return;
+            multicastLock = wifi.createMulticastLock("p2pshare-discovery");
+            multicastLock.setReferenceCounted(false);
+            multicastLock.acquire();
+        } catch (Exception e) {
+            android.util.Log.e("P2PShare", "MulticastLock failed", e);
         }
     }
 
+    /** Listen for the tracker, retrying until found. Handles network changes. */
+    private void startDiscovery() {
+        discovery.listenForTracker(found -> {
+            if (found != null) {
+                String[] parts = found.split(":");
+                trackerHost = parts[0];
+                trackerPort = Integer.parseInt(parts[1]);
+                trackerClient.setTracker(trackerHost, trackerPort);
+                isConnected = trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, sharedFiles);
+                savePrefs();
+                if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
+            } else if (!isConnected) {
+                // Timed out without finding a tracker — keep retrying. A stale
+                // tracker host saved from a previous network must not stop discovery.
+                startDiscovery();
+            }
+        });
+    }
+
+    private final java.util.concurrent.ScheduledExecutorService keepAlive =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "tracker-keepalive");
+                t.setDaemon(true);
+                return t;
+            });
+
     public void shutdown() {
+        keepAlive.shutdownNow();
         if (trackerClient != null) trackerClient.unregister(myIp, Protocol.DEFAULT_PEER_PORT);
         if (peerServer != null) peerServer.stop();
         if (downloadManager != null) downloadManager.shutdown();
+    }
+
+    /** Determine the real LAN IP via a connected UDP socket (no packets sent). */
+    private String detectLanIp() {
+        try (java.net.DatagramSocket s = new java.net.DatagramSocket()) {
+            s.connect(InetAddress.getByName("8.8.8.8"), 53);
+            String ip = s.getLocalAddress().getHostAddress();
+            if (ip != null && !ip.startsWith("127.") && !ip.equals("0.0.0.0")) return ip;
+        } catch (Exception ignored) {}
+        try { return InetAddress.getLocalHost().getHostAddress(); }
+        catch (Exception e) { return "127.0.0.1"; }
     }
 
     public File getSharedFolder() {
@@ -116,7 +177,9 @@ public class AppState {
             }
         }
         if (isConnected && trackerClient != null) {
-            trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, sharedFiles);
+            // Network call must not run on the main thread (would throw NetworkOnMainThreadException).
+            final List<FileInfo> snapshot = new ArrayList<>(sharedFiles);
+            new Thread(() -> trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, snapshot)).start();
         }
     }
 

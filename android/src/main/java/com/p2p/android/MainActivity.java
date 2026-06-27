@@ -10,6 +10,7 @@ import com.p2p.android.ui.DownloadsFragment;
 import com.p2p.android.ui.SearchFragment;
 import com.p2p.android.ui.SharedFragment;
 import com.p2p.android.ui.SettingsFragment;
+import com.p2p.android.service.TransferService;
 
 public class MainActivity extends AppCompatActivity {
 

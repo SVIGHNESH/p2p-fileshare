@@ -14,19 +14,22 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.*;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class SearchView {
 
     public Node build() {
         VBox root = new VBox(0);
-        root.setStyle("-fx-background-color: #0f0f13;");
+        root.setStyle("-fx-background-color: #0E1419;");
 
         // ── Hero Search Bar ──────────────────────────────────────────────────
         VBox heroBox = new VBox(16);
         heroBox.setAlignment(Pos.CENTER);
         heroBox.setPadding(new Insets(48, 40, 32, 40));
-        heroBox.setStyle("-fx-background-color: #13131a;");
+        heroBox.setStyle("-fx-background-color: #121A21;");
 
         Label heading = new Label("Find Files on Your Network");
         heading.setFont(Font.font("System", FontWeight.BOLD, 24));
@@ -34,7 +37,7 @@ public class SearchView {
 
         Label sub = new Label("Search for files shared by people on the same Wi-Fi or network as you.");
         sub.setFont(Font.font("System", 14));
-        sub.setTextFill(Color.web("#6b7080"));
+        sub.setTextFill(Color.web("#93A1AE"));
         sub.setWrapText(true);
         sub.setTextAlignment(TextAlignment.CENTER);
 
@@ -48,33 +51,41 @@ public class SearchView {
         searchField.setPrefHeight(48);
         HBox.setHgrow(searchField, Priority.ALWAYS);
         searchField.setStyle(
-                "-fx-background-color: #1e1e2e; -fx-text-fill: white; " +
-                "-fx-border-color: #3a3a5a; -fx-border-radius: 8; -fx-background-radius: 8; " +
-                "-fx-prompt-text-fill: #555877; -fx-padding: 0 16 0 16;");
+                "-fx-background-color: #1D2730; -fx-text-fill: white; " +
+                "-fx-border-color: #36434F; -fx-border-radius: 8; -fx-background-radius: 8; " +
+                "-fx-prompt-text-fill: #5E6B77; -fx-padding: 0 16 0 16;");
 
         Button searchBtn = new Button("Search");
         searchBtn.setPrefHeight(48);
         searchBtn.setPrefWidth(110);
         searchBtn.setFont(Font.font("System", FontWeight.BOLD, 14));
         searchBtn.setStyle(
-                "-fx-background-color: #7c6ef7; -fx-text-fill: white; " +
+                "-fx-background-color: #0E8C77; -fx-text-fill: white; " +
                 "-fx-background-radius: 8; -fx-cursor: hand;");
 
-        searchBar.getChildren().addAll(searchField, searchBtn);
+        Button browseBtn = new Button("Browse All");
+        browseBtn.setPrefHeight(48);
+        browseBtn.setPrefWidth(120);
+        browseBtn.setFont(Font.font("System", FontWeight.BOLD, 14));
+        browseBtn.setStyle(
+                "-fx-background-color: #26313C; -fx-text-fill: #CBD5DF; " +
+                "-fx-background-radius: 8; -fx-cursor: hand;");
+
+        searchBar.getChildren().addAll(searchField, searchBtn, browseBtn);
         heroBox.getChildren().addAll(heading, sub, searchBar);
 
         // ── Results Area ────────────────────────────────────────────────────
         ScrollPane scrollPane = new ScrollPane();
         scrollPane.setFitToWidth(true);
-        scrollPane.setStyle("-fx-background: #0f0f13; -fx-background-color: #0f0f13; -fx-border-color: transparent;");
+        scrollPane.setStyle("-fx-background: #0E1419; -fx-background-color: #0E1419; -fx-border-color: transparent;");
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
 
         VBox resultsBox = new VBox(12);
         resultsBox.setPadding(new Insets(24, 40, 24, 40));
-        resultsBox.setStyle("-fx-background-color: #0f0f13;");
+        resultsBox.setStyle("-fx-background-color: #0E1419;");
 
         Label placeholder = new Label("🔍  Search for a file above to see results here.");
-        placeholder.setTextFill(Color.web("#444460"));
+        placeholder.setTextFill(Color.web("#4A5662"));
         placeholder.setFont(Font.font("System", 15));
         resultsBox.getChildren().add(placeholder);
         scrollPane.setContent(resultsBox);
@@ -86,12 +97,12 @@ public class SearchView {
 
             resultsBox.getChildren().clear();
             Label searching = new Label("Searching the network for \"" + query + "\"...");
-            searching.setTextFill(Color.web("#7c6ef7"));
+            searching.setTextFill(Color.web("#0E8C77"));
             searching.setFont(Font.font("System", 14));
             resultsBox.getChildren().add(searching);
 
             AppState state = AppState.get();
-            if (!state.isConnected) {
+            if (!state.isConnected.get()) {
                 resultsBox.getChildren().clear();
                 resultsBox.getChildren().add(buildErrorCard(
                         "Not Connected to Network",
@@ -108,7 +119,7 @@ public class SearchView {
                         return;
                     }
                     Label countLabel = new Label("Found \"" + query + "\" on " + peers.size() + " peer(s):");
-                    countLabel.setTextFill(Color.web("#a0a0c0"));
+                    countLabel.setTextFill(Color.web("#B3C0CC"));
                     countLabel.setFont(Font.font("System", 13));
                     resultsBox.getChildren().add(countLabel);
 
@@ -125,8 +136,56 @@ public class SearchView {
             }).start();
         };
 
+        // ── Browse Action ────────────────────────────────────────────────────
+        Runnable doBrowse = () -> {
+            AppState state = AppState.get();
+            if (!state.isConnected.get()) {
+                resultsBox.getChildren().clear();
+                resultsBox.getChildren().add(buildErrorCard(
+                        "Not Connected to Network",
+                        "Go to ⚙ Settings and enter your tracker address, or wait for auto-discovery."));
+                return;
+            }
+
+            resultsBox.getChildren().clear();
+            Label loading = new Label("Loading all files on the network...");
+            loading.setTextFill(Color.web("#0E8C77"));
+            loading.setFont(Font.font("System", 14));
+            resultsBox.getChildren().add(loading);
+
+            new Thread(() -> {
+                List<PeerInfo> peers = state.trackerClient.browseAll();
+                // Aggregate unique files (by name) -> list of peers that have them
+                Map<String, FileInfo> filesByName = new LinkedHashMap<>();
+                Map<String, List<PeerInfo>> peersByFile = new LinkedHashMap<>();
+                for (PeerInfo peer : peers) {
+                    if (peer.files == null) continue;
+                    for (FileInfo f : peer.files) {
+                        filesByName.putIfAbsent(f.name, f);
+                        peersByFile.computeIfAbsent(f.name, k -> new ArrayList<>()).add(peer);
+                    }
+                }
+                Platform.runLater(() -> {
+                    resultsBox.getChildren().clear();
+                    if (filesByName.isEmpty()) {
+                        resultsBox.getChildren().add(buildEmptyBrowse());
+                        return;
+                    }
+                    Label countLabel = new Label(filesByName.size() + " file(s) available on the network:");
+                    countLabel.setTextFill(Color.web("#B3C0CC"));
+                    countLabel.setFont(Font.font("System", 13));
+                    resultsBox.getChildren().add(countLabel);
+                    for (Map.Entry<String, FileInfo> entry : filesByName.entrySet()) {
+                        resultsBox.getChildren().add(
+                                buildResultCard(entry.getValue(), peersByFile.get(entry.getKey())));
+                    }
+                });
+            }).start();
+        };
+
         searchBtn.setOnAction(e -> doSearch.run());
         searchField.setOnAction(e -> doSearch.run());
+        browseBtn.setOnAction(e -> doBrowse.run());
 
         root.getChildren().addAll(heroBox, scrollPane);
         return root;
@@ -137,8 +196,8 @@ public class SearchView {
         card.setPadding(new Insets(20, 24, 20, 24));
         card.setAlignment(Pos.CENTER_LEFT);
         card.setStyle(
-                "-fx-background-color: #16161f; -fx-background-radius: 12; " +
-                "-fx-border-color: #2a2a3a; -fx-border-radius: 12; -fx-border-width: 1;");
+                "-fx-background-color: #161F28; -fx-background-radius: 12; " +
+                "-fx-border-color: #26313C; -fx-border-radius: 12; -fx-border-width: 1;");
 
         Label icon = new Label(fileIcon(file.name));
         icon.setFont(Font.font("System", 32));
@@ -152,7 +211,7 @@ public class SearchView {
 
         String sizeStr = formatSize(file.size);
         Label details = new Label(sizeStr + "  ·  " + peers.size() + " source(s)  ·  " + file.totalChunks + " chunks");
-        details.setTextFill(Color.web("#6b7080"));
+        details.setTextFill(Color.web("#93A1AE"));
         details.setFont(Font.font("System", 13));
 
         meta.getChildren().addAll(nameLabel, details);
@@ -160,7 +219,7 @@ public class SearchView {
         Button downloadBtn = new Button("⬇  Download");
         downloadBtn.setFont(Font.font("System", FontWeight.BOLD, 13));
         downloadBtn.setStyle(
-                "-fx-background-color: #7c6ef7; -fx-text-fill: white; " +
+                "-fx-background-color: #0E8C77; -fx-text-fill: white; " +
                 "-fx-background-radius: 8; -fx-cursor: hand; -fx-padding: 10 20 10 20;");
 
         downloadBtn.setOnAction(e -> startDownload(file, peers, downloadBtn));
@@ -187,12 +246,12 @@ public class SearchView {
         task.onProgressUpdate = t -> Platform.runLater(() -> btn.setText("⬇  " + t.getProgressText()));
         task.onComplete = t -> Platform.runLater(() -> {
             btn.setText("✓  Done!");
-            btn.setStyle("-fx-background-color: #2e7d32; -fx-text-fill: white; -fx-background-radius: 8;");
+            btn.setStyle("-fx-background-color: #2C7A45; -fx-text-fill: white; -fx-background-radius: 8;");
             state.refreshSharedFiles();
         });
         task.onError = t -> Platform.runLater(() -> {
             btn.setText("✗  Failed — click to retry");
-            btn.setStyle("-fx-background-color: #c62828; -fx-text-fill: white; -fx-background-radius: 8;");
+            btn.setStyle("-fx-background-color: #B23B36; -fx-text-fill: white; -fx-background-radius: 8;");
         });
 
         state.downloads.add(task);
@@ -207,10 +266,26 @@ public class SearchView {
         Label icon = new Label("🤷");
         icon.setFont(Font.font("System", 40));
         Label msg = new Label("No one on the network is sharing \"" + query + "\" right now.");
-        msg.setTextFill(Color.web("#555877"));
+        msg.setTextFill(Color.web("#5E6B77"));
         msg.setFont(Font.font("System", 15));
         Label hint = new Label("Ask someone to share it and try again.");
-        hint.setTextFill(Color.web("#3a3a5a"));
+        hint.setTextFill(Color.web("#36434F"));
+        hint.setFont(Font.font("System", 13));
+        box.getChildren().addAll(icon, msg, hint);
+        return box;
+    }
+
+    private Node buildEmptyBrowse() {
+        VBox box = new VBox(8);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(60, 0, 0, 0));
+        Label icon = new Label("📭");
+        icon.setFont(Font.font("System", 40));
+        Label msg = new Label("No files are being shared on the network right now.");
+        msg.setTextFill(Color.web("#5E6B77"));
+        msg.setFont(Font.font("System", 15));
+        Label hint = new Label("Ask someone to add files to their shared folder.");
+        hint.setTextFill(Color.web("#36434F"));
         hint.setFont(Font.font("System", 13));
         box.getChildren().addAll(icon, msg, hint);
         return box;
@@ -219,12 +294,12 @@ public class SearchView {
     private Node buildErrorCard(String title, String body) {
         VBox box = new VBox(8);
         box.setPadding(new Insets(24));
-        box.setStyle("-fx-background-color: #1e0e0e; -fx-background-radius: 12; -fx-border-color: #f44336; -fx-border-radius: 12; -fx-border-width: 1;");
+        box.setStyle("-fx-background-color: #1F1212; -fx-background-radius: 12; -fx-border-color: #E5564E; -fx-border-radius: 12; -fx-border-width: 1;");
         Label t = new Label("⚠  " + title);
         t.setFont(Font.font("System", FontWeight.BOLD, 15));
-        t.setTextFill(Color.web("#f44336"));
+        t.setTextFill(Color.web("#E5564E"));
         Label b = new Label(body);
-        b.setTextFill(Color.web("#cc8888"));
+        b.setTextFill(Color.web("#D69B97"));
         b.setFont(Font.font("System", 13));
         b.setWrapText(true);
         box.getChildren().addAll(t, b);

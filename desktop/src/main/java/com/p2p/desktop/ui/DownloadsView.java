@@ -16,36 +16,36 @@ public class DownloadsView {
 
     public Node build() {
         VBox root = new VBox(0);
-        root.setStyle("-fx-background-color: #0f0f13;");
+        root.setStyle("-fx-background-color: #0E1419;");
 
         // ── Header ───────────────────────────────────────────────────────────
         HBox header = new HBox();
         header.setPadding(new Insets(24, 32, 16, 32));
-        header.setStyle("-fx-background-color: #13131a;");
+        header.setStyle("-fx-background-color: #121A21;");
         Label title = new Label("Downloads");
         title.setFont(Font.font("System", FontWeight.BOLD, 22));
         title.setTextFill(Color.WHITE);
         Label subtitle = new Label("   —  Files you've downloaded or are currently downloading");
         subtitle.setFont(Font.font("System", 14));
-        subtitle.setTextFill(Color.web("#555877"));
+        subtitle.setTextFill(Color.web("#5E6B77"));
         subtitle.setAlignment(Pos.BOTTOM_LEFT);
         header.getChildren().addAll(title, subtitle);
 
         // ── List ─────────────────────────────────────────────────────────────
         ScrollPane scroll = new ScrollPane();
         scroll.setFitToWidth(true);
-        scroll.setStyle("-fx-background: #0f0f13; -fx-background-color: #0f0f13; -fx-border-color: transparent;");
+        scroll.setStyle("-fx-background: #0E1419; -fx-background-color: #0E1419; -fx-border-color: transparent;");
         VBox.setVgrow(scroll, Priority.ALWAYS);
 
         VBox list = new VBox(12);
         list.setPadding(new Insets(20, 32, 20, 32));
-        list.setStyle("-fx-background-color: #0f0f13;");
+        list.setStyle("-fx-background-color: #0E1419;");
 
         AppState state = AppState.get();
 
         // Empty state
         Label empty = new Label("No downloads yet.\nGo to 🔍 Search to find and download files from the network.");
-        empty.setTextFill(Color.web("#444460"));
+        empty.setTextFill(Color.web("#4A5662"));
         empty.setFont(Font.font("System", 15));
         empty.setTextAlignment(TextAlignment.CENTER);
         empty.setWrapText(true);
@@ -76,8 +76,8 @@ public class DownloadsView {
         VBox card = new VBox(12);
         card.setPadding(new Insets(20, 24, 20, 24));
         card.setStyle(
-                "-fx-background-color: #16161f; -fx-background-radius: 12; " +
-                "-fx-border-color: #2a2a3a; -fx-border-radius: 12; -fx-border-width: 1;");
+                "-fx-background-color: #161F28; -fx-background-radius: 12; " +
+                "-fx-border-color: #26313C; -fx-border-radius: 12; -fx-border-width: 1;");
 
         // File name row
         HBox nameRow = new HBox(10);
@@ -100,13 +100,13 @@ public class DownloadsView {
         ProgressBar bar = new ProgressBar(task.progress);
         bar.setPrefWidth(Double.MAX_VALUE);
         bar.setPrefHeight(10);
-        bar.setStyle("-fx-accent: #7c6ef7;");
+        bar.setStyle("-fx-accent: #0E8C77;");
 
         // Detail row
         HBox detailRow = new HBox(16);
         detailRow.setAlignment(Pos.CENTER_LEFT);
         Label progressText = new Label(task.getProgressText());
-        progressText.setTextFill(Color.web("#6b7080"));
+        progressText.setTextFill(Color.web("#93A1AE"));
         progressText.setFont(Font.font("System", 12));
         Region spacer2 = new Region();
         HBox.setHgrow(spacer2, Priority.ALWAYS);
@@ -114,7 +114,7 @@ public class DownloadsView {
         Button cancelBtn = new Button("Cancel");
         cancelBtn.setFont(Font.font("System", 12));
         cancelBtn.setStyle(
-                "-fx-background-color: #2a1a1a; -fx-text-fill: #f44336; " +
+                "-fx-background-color: #2A1414; -fx-text-fill: #E5564E; " +
                 "-fx-background-radius: 6; -fx-cursor: hand;");
         cancelBtn.setVisible(task.state == DownloadManager.DownloadState.DOWNLOADING ||
                 task.state == DownloadManager.DownloadState.QUEUED);
@@ -137,27 +137,49 @@ public class DownloadsView {
         });
         task.onComplete = t -> Platform.runLater(() -> {
             bar.setProgress(1.0);
-            bar.setStyle("-fx-accent: #4caf50;");
+            bar.setStyle("-fx-accent: #46C46A;");
             statusLabel.setText("✓ Complete");
-            statusLabel.setTextFill(Color.web("#4caf50"));
-            progressText.setText("Download complete — saved to your shared folder");
+            statusLabel.setTextFill(Color.web("#46C46A"));
+            progressText.setText("Download complete — click to open");
             cancelBtn.setVisible(false);
+            card.setCursor(javafx.scene.Cursor.HAND);
             card.setStyle(
-                    "-fx-background-color: #0f1a0f; -fx-background-radius: 12; " +
-                    "-fx-border-color: #2a5a2a; -fx-border-radius: 12; -fx-border-width: 1;");
+                    "-fx-background-color: #0E1F16; -fx-background-radius: 12; " +
+                    "-fx-border-color: #2C5A3F; -fx-border-radius: 12; -fx-border-width: 1;");
         });
+
+        // Click a completed card to open the file (falls back to the shared folder).
+        if (task.state == DownloadManager.DownloadState.COMPLETE) card.setCursor(javafx.scene.Cursor.HAND);
+        card.setOnMouseClicked(e -> openDownload(task));
         task.onError = t -> Platform.runLater(() -> {
-            bar.setStyle("-fx-accent: #f44336;");
+            bar.setStyle("-fx-accent: #E5564E;");
             statusLabel.setText("✗ Failed");
-            statusLabel.setTextFill(Color.web("#f44336"));
+            statusLabel.setTextFill(Color.web("#E5564E"));
             progressText.setText(t.errorMessage != null ? t.errorMessage : "Unknown error");
             cancelBtn.setVisible(false);
             card.setStyle(
-                    "-fx-background-color: #1a0f0f; -fx-background-radius: 12; " +
-                    "-fx-border-color: #5a2a2a; -fx-border-radius: 12; -fx-border-width: 1;");
+                    "-fx-background-color: #1F1212; -fx-background-radius: 12; " +
+                    "-fx-border-color: #5A3030; -fx-border-radius: 12; -fx-border-width: 1;");
         });
 
         return card;
+    }
+
+    /** Open a completed download with the OS default app; fall back to the shared folder. */
+    private void openDownload(DownloadTask task) {
+        if (task.state != DownloadManager.DownloadState.COMPLETE) return;
+        java.io.File file = new java.io.File(AppState.get().getSharedFolder(), task.filename);
+        java.io.File folder = AppState.get().getSharedFolder();
+        new Thread(() -> {
+            try {
+                if (!java.awt.Desktop.isDesktopSupported()) return;
+                java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
+                if (file.exists()) desktop.open(file);
+                else desktop.open(folder);
+            } catch (Exception ex) {
+                try { java.awt.Desktop.getDesktop().open(folder); } catch (Exception ignored) {}
+            }
+        }, "open-download").start();
     }
 
     private String stateText(DownloadManager.DownloadState s) {
@@ -175,11 +197,11 @@ public class DownloadsView {
     private Color stateColor(DownloadManager.DownloadState s) {
         return switch (s) {
             case QUEUED -> Color.web("#888");
-            case CONNECTING, DOWNLOADING -> Color.web("#7c6ef7");
-            case VERIFYING -> Color.web("#ffa726");
-            case COMPLETE -> Color.web("#4caf50");
-            case FAILED -> Color.web("#f44336");
-            case PAUSED -> Color.web("#ffa726");
+            case CONNECTING, DOWNLOADING -> Color.web("#0E8C77");
+            case VERIFYING -> Color.web("#E0A33A");
+            case COMPLETE -> Color.web("#46C46A");
+            case FAILED -> Color.web("#E5564E");
+            case PAUSED -> Color.web("#E0A33A");
         };
     }
 

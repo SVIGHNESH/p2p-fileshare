@@ -144,6 +144,7 @@ public class DownloadManager {
             socket.setSoTimeout(30000);
             Message req = new Message(MessageType.CHUNK_REQUEST, new ChunkRequest(filename, chunkIndex));
             out.print(req.toJson());
+            out.flush();
 
             // Read JSON header line
             StringBuilder headerLine = new StringBuilder();

@@ -48,6 +48,11 @@ public class TrackerClient {
         }
     }
 
+    /** Browse all files on the network: returns every active peer with its file list. */
+    public List<PeerInfo> browseAll() {
+        return query("");
+    }
+
     public void unregister(String myIp, int myPort) {
         try {
             sendAndReceive(new Message(MessageType.UNREGISTER,
@@ -60,7 +65,7 @@ public class TrackerClient {
              PrintWriter out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream()), true);
              BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
             socket.setSoTimeout(5000);
-            out.print(msg.toJson());
+            out.println(msg.toJson());
             String line = in.readLine();
             return line != null ? Message.fromJson(line) : null;
         }

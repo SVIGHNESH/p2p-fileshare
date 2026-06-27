@@ -4,24 +4,25 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F0F13">
+    android:background="#0E1419">
 
     <!-- App Bar -->
     <com.google.android.material.appbar.AppBarLayout
         android:id="@+id/app_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#16161F"
+        android:background="#161F28"
         app:elevation="0dp">
 
         <androidx.appcompat.widget.Toolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="#16161F"
-            app:title="⬡  P2P Share"
+            android:background="#161F28"
+            app:logo="@drawable/ic_logo"
+            app:title="P2P Share"
             app:titleTextColor="#FFFFFF"
-            app:subtitleTextColor="#6B7080" />
+            app:subtitleTextColor="#93A1AE" />
 
     </com.google.android.material.appbar.AppBarLayout>
 
@@ -30,7 +31,7 @@
         android:id="@+id/fragment_container"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#0F0F13"
+        android:background="#0E1419"
         app:layout_behavior="@string/appbar_scrolling_view_behavior" />
 
     <!-- Bottom Navigation -->
@@ -39,7 +40,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="#16161F"
+        android:background="#161F28"
         app:itemIconTint="@color/nav_item_color"
         app:itemTextColor="@color/nav_item_color"
         app:menu="@menu/bottom_nav_menu"

@@ -7,6 +7,8 @@ import com.p2p.core.protocol.Protocol.FileInfo;
 import com.p2p.core.tracker.TrackerClient;
 import com.p2p.core.transfer.DownloadManager;
 import com.p2p.core.transfer.PeerServer;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.collections.FXCollections;
@@ -46,7 +48,7 @@ public class AppState {
     public final ObservableList<DownloadManager.DownloadTask> downloads = FXCollections.observableArrayList();
     public final ObservableList<FileInfo> sharedFiles = FXCollections.observableArrayList();
 
-    public boolean isConnected = false;
+    public final BooleanProperty isConnected = new SimpleBooleanProperty(false);
     public String myIp = "unknown";
 
     public void savePrefs() {
@@ -54,6 +56,17 @@ public class AppState {
         prefs.put("trackerPort", trackerPort.get());
         prefs.put("sharedFolder", sharedFolderPath.get());
         prefs.put("displayName", myDisplayName.get());
+    }
+
+    /** Determine the real LAN IP via a connected UDP socket (no packets sent). */
+    private String detectLanIp() {
+        try (java.net.DatagramSocket s = new java.net.DatagramSocket()) {
+            s.connect(InetAddress.getByName("8.8.8.8"), 53);
+            String ip = s.getLocalAddress().getHostAddress();
+            if (ip != null && !ip.startsWith("127.") && !ip.equals("0.0.0.0")) return ip;
+        } catch (Exception ignored) {}
+        try { return InetAddress.getLocalHost().getHostAddress(); }
+        catch (Exception e) { return "127.0.0.1"; }
     }
 
     public File getSharedFolder() {
@@ -80,8 +93,10 @@ public class AppState {
     }
 
     public void init() {
-        try { myIp = InetAddress.getLocalHost().getHostAddress(); }
-        catch (Exception e) { myIp = "127.0.0.1"; }
+        try { com.p2p.core.crypto.TLSHelper.init(); }
+        catch (Exception e) { System.err.println("[AppState] TLS init failed: " + e.getMessage()); }
+
+        myIp = detectLanIp();
 
         sharedFiles.setAll(buildFileList());
 
@@ -95,36 +110,76 @@ public class AppState {
         trackerClient = new TrackerClient(trackerHost.get(), tPort);
 
         if (!trackerHost.get().isBlank()) {
-            isConnected = trackerClient.register(myIp, port, sharedFiles);
+            isConnected.set(trackerClient.register(myIp, port, sharedFiles));
         }
 
-        // Auto-discover tracker if not configured
-        if (!isConnected) {
-            discovery = new UDPDiscovery();
-            discovery.listenForTracker(found -> {
-                if (found != null) {
-                    String[] parts = found.split(":");
-                    trackerHost.set(parts[0]);
-                    trackerPort.set(parts[1]);
-                    int tp = Integer.parseInt(parts[1]);
-                    trackerClient.setTracker(parts[0], tp);
-                    isConnected = trackerClient.register(myIp, port, sharedFiles);
-                    savePrefs();
-                }
-            });
+        // Try localhost first (common case: tracker and desktop on same machine)
+        if (!isConnected.get()) {
+            trackerClient.setTracker("127.0.0.1", tPort);
+            if (trackerClient.register(myIp, port, sharedFiles)) {
+                trackerHost.set("127.0.0.1");
+                isConnected.set(true);
+                savePrefs();
+            }
         }
+
+        // Auto-discover tracker if not configured — retry until found or manually connected
+        if (!isConnected.get()) {
+            discovery = new UDPDiscovery();
+            scheduleDiscovery(discovery, port);
+        }
+
+        // Re-register periodically so the tracker doesn't evict us (90s timeout).
+        keepAlive.scheduleAtFixedRate(() -> {
+            if (isConnected.get() && trackerClient != null) {
+                trackerClient.register(myIp, port, new ArrayList<>(sharedFiles));
+            }
+        }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (trackerClient != null) trackerClient.unregister(myIp, port);
             if (peerServer != null) peerServer.stop();
             if (downloadManager != null) downloadManager.shutdown();
+            keepAlive.shutdownNow();
             savePrefs();
         }));
     }
 
+    private final java.util.concurrent.ScheduledExecutorService keepAlive =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "tracker-keepalive");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private void scheduleDiscovery(UDPDiscovery disc, int peerPort) {
+        disc.listenForTracker(found -> {
+            if (found != null) {
+                String[] parts = found.split(":");
+                trackerHost.set(parts[0]);
+                trackerPort.set(parts[1]);
+                trackerClient.setTracker(parts[0], Integer.parseInt(parts[1]));
+                isConnected.set(trackerClient.register(myIp, peerPort, sharedFiles));
+                savePrefs();
+            } else if (!isConnected.get()) {
+                // Timed out, still not connected — keep retrying. A stale tracker
+                // host saved from a previous network must not stop discovery.
+                scheduleDiscovery(disc, peerPort);
+            }
+        });
+    }
+
+    public void reconnect() {
+        if (trackerHost.get().isBlank()) return;
+        int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
+        int tPort = Integer.parseInt(trackerPort.get().isBlank() ? "9000" : trackerPort.get());
+        trackerClient.setTracker(trackerHost.get(), tPort);
+        isConnected.set(trackerClient.register(myIp, port, sharedFiles));
+    }
+
     public void refreshSharedFiles() {
         sharedFiles.setAll(buildFileList());
-        if (isConnected) {
+        if (isConnected.get()) {
             int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
             trackerClient.register(myIp, port, sharedFiles);
         }

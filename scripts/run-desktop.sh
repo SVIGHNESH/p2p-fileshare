@@ -26,7 +26,7 @@ echo ""
 
 exec java \
     --module-path "$FX_MODS" \
-    --add-modules javafx.controls,javafx.graphics \
+    --add-modules javafx.controls,javafx.graphics,java.desktop \
     --enable-native-access=javafx.graphics \
     -cp "$GSON:$BUILD/core:$BUILD/desktop" \
     com.p2p.desktop.Main "$@"

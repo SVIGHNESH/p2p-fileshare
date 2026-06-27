@@ -20,13 +20,13 @@ public class SharingView {
 
     public Node build() {
         VBox root = new VBox(0);
-        root.setStyle("-fx-background-color: #0f0f13;");
+        root.setStyle("-fx-background-color: #0E1419;");
 
         // ── Header ────────────────────────────────────────────────────────────
         HBox header = new HBox(16);
         header.setPadding(new Insets(24, 32, 16, 32));
         header.setAlignment(Pos.CENTER_LEFT);
-        header.setStyle("-fx-background-color: #13131a;");
+        header.setStyle("-fx-background-color: #121A21;");
 
         VBox titleBox = new VBox(4);
         Label title = new Label("My Shared Files");
@@ -34,7 +34,7 @@ public class SharingView {
         title.setTextFill(Color.WHITE);
         Label subtitle = new Label("Files in your shared folder are visible to everyone on the network.");
         subtitle.setFont(Font.font("System", 13));
-        subtitle.setTextFill(Color.web("#555877"));
+        subtitle.setTextFill(Color.web("#5E6B77"));
         titleBox.getChildren().addAll(title, subtitle);
 
         Region spacer = new Region();
@@ -43,15 +43,15 @@ public class SharingView {
         Button addBtn = new Button("+ Add File");
         addBtn.setFont(Font.font("System", FontWeight.BOLD, 14));
         addBtn.setStyle(
-                "-fx-background-color: #7c6ef7; -fx-text-fill: white; " +
+                "-fx-background-color: #0E8C77; -fx-text-fill: white; " +
                 "-fx-background-radius: 8; -fx-cursor: hand; -fx-padding: 10 20 10 20;");
         addBtn.setOnAction(e -> addFile());
 
         Button refreshBtn = new Button("↻ Refresh");
         refreshBtn.setFont(Font.font("System", 13));
         refreshBtn.setStyle(
-                "-fx-background-color: #1e1e2e; -fx-text-fill: #a0a0c0; " +
-                "-fx-border-color: #3a3a5a; -fx-border-radius: 8; " +
+                "-fx-background-color: #1D2730; -fx-text-fill: #B3C0CC; " +
+                "-fx-border-color: #36434F; -fx-border-radius: 8; " +
                 "-fx-background-radius: 8; -fx-cursor: hand; -fx-padding: 10 16 10 16;");
         refreshBtn.setOnAction(e -> AppState.get().refreshSharedFiles());
 
@@ -61,11 +61,11 @@ public class SharingView {
         HBox folderBanner = new HBox(10);
         folderBanner.setAlignment(Pos.CENTER_LEFT);
         folderBanner.setPadding(new Insets(12, 32, 12, 32));
-        folderBanner.setStyle("-fx-background-color: #0d1020;");
+        folderBanner.setStyle("-fx-background-color: #101A20;");
         Label folderIcon = new Label("📂");
         folderIcon.setFont(Font.font("System", 16));
         Label folderLabel = new Label("Shared folder: " + AppState.get().sharedFolderPath.get());
-        folderLabel.setTextFill(Color.web("#7c6ef7"));
+        folderLabel.setTextFill(Color.web("#0E8C77"));
         folderLabel.setFont(Font.font("System", 13));
         AppState.get().sharedFolderPath.addListener((o, ov, nv) ->
                 folderLabel.setText("Shared folder: " + nv));
@@ -74,12 +74,12 @@ public class SharingView {
         // ── File Grid ────────────────────────────────────────────────────────
         ScrollPane scroll = new ScrollPane();
         scroll.setFitToWidth(true);
-        scroll.setStyle("-fx-background: #0f0f13; -fx-background-color: #0f0f13; -fx-border-color: transparent;");
+        scroll.setStyle("-fx-background: #0E1419; -fx-background-color: #0E1419; -fx-border-color: transparent;");
         VBox.setVgrow(scroll, Priority.ALWAYS);
 
         VBox listBox = new VBox(10);
         listBox.setPadding(new Insets(20, 32, 20, 32));
-        listBox.setStyle("-fx-background-color: #0f0f13;");
+        listBox.setStyle("-fx-background-color: #0E1419;");
 
         // Render initial files
         renderFiles(listBox);
@@ -99,7 +99,7 @@ public class SharingView {
         AppState state = AppState.get();
         if (state.sharedFiles.isEmpty()) {
             Label empty = new Label("You're not sharing any files yet.\nClick \"+ Add File\" to share a file with the network.");
-            empty.setTextFill(Color.web("#444460"));
+            empty.setTextFill(Color.web("#4A5662"));
             empty.setFont(Font.font("System", 15));
             empty.setTextAlignment(TextAlignment.CENTER);
             empty.setWrapText(true);
@@ -116,8 +116,8 @@ public class SharingView {
         row.setPadding(new Insets(16, 20, 16, 20));
         row.setAlignment(Pos.CENTER_LEFT);
         row.setStyle(
-                "-fx-background-color: #16161f; -fx-background-radius: 10; " +
-                "-fx-border-color: #2a2a3a; -fx-border-radius: 10; -fx-border-width: 1;");
+                "-fx-background-color: #161F28; -fx-background-radius: 10; " +
+                "-fx-border-color: #26313C; -fx-border-radius: 10; -fx-border-width: 1;");
 
         Label icon = new Label(fileIcon(fi.name));
         icon.setFont(Font.font("System", 28));
@@ -128,14 +128,14 @@ public class SharingView {
         nameLabel.setFont(Font.font("System", FontWeight.BOLD, 15));
         nameLabel.setTextFill(Color.WHITE);
         Label details = new Label(formatSize(fi.size) + "  ·  " + fi.totalChunks + " chunks  ·  Shared ✓");
-        details.setTextFill(Color.web("#4caf50"));
+        details.setTextFill(Color.web("#46C46A"));
         details.setFont(Font.font("System", 12));
         meta.getChildren().addAll(nameLabel, details);
 
         Button removeBtn = new Button("Remove");
         removeBtn.setFont(Font.font("System", 12));
         removeBtn.setStyle(
-                "-fx-background-color: #2a1a1a; -fx-text-fill: #f44336; " +
+                "-fx-background-color: #2A1414; -fx-text-fill: #E5564E; " +
                 "-fx-background-radius: 6; -fx-cursor: hand;");
         removeBtn.setOnAction(e -> {
             File f = new File(AppState.get().getSharedFolder(), fi.name);
