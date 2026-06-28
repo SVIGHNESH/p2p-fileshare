@@ -1,4 +1,5 @@
 package com.p2p.android.ui;
+import com.p2p.android.R;
 
 import android.os.Bundle;
 import android.view.*;
@@ -32,6 +33,7 @@ public class SearchFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         EditText searchField = view.findViewById(R.id.search_field);
         Button searchBtn = view.findViewById(R.id.search_button);
+        Button browseBtn = view.findViewById(R.id.browse_button);
         resultsContainer = view.findViewById(R.id.results_container);
         searchProgress = view.findViewById(R.id.search_progress);
         statusText = view.findViewById(R.id.status_text);
@@ -40,6 +42,8 @@ public class SearchFragment extends Fragment {
             String query = searchField.getText().toString().trim();
             if (!query.isEmpty()) performSearch(query);
         });
+
+        browseBtn.setOnClickListener(v -> performBrowse());
 
         searchField.setOnEditorActionListener((v, actionId, event) -> {
             String query = searchField.getText().toString().trim();
@@ -79,6 +83,45 @@ public class SearchFragment extends Fragment {
         }).start();
     }
 
+    private void performBrowse() {
+        resultsContainer.removeAllViews();
+        searchProgress.setVisibility(View.VISIBLE);
+        statusText.setText("Loading all files on the network...");
+
+        AppState state = AppState.get(requireContext());
+        if (!state.isConnected) {
+            searchProgress.setVisibility(View.GONE);
+            statusText.setText("⚠ Not connected. Go to Settings to configure the tracker.");
+            return;
+        }
+
+        new Thread(() -> {
+            List<PeerInfo> peers = state.trackerClient.browseAll();
+            // Aggregate unique files (by name) -> list of peers that have them
+            java.util.Map<String, FileInfo> filesByName = new java.util.LinkedHashMap<>();
+            java.util.Map<String, List<PeerInfo>> peersByFile = new java.util.LinkedHashMap<>();
+            for (PeerInfo peer : peers) {
+                if (peer.files == null) continue;
+                for (FileInfo f : peer.files) {
+                    filesByName.putIfAbsent(f.name, f);
+                    peersByFile.computeIfAbsent(f.name, k -> new java.util.ArrayList<>()).add(peer);
+                }
+            }
+            requireActivity().runOnUiThread(() -> {
+                searchProgress.setVisibility(View.GONE);
+                if (filesByName.isEmpty()) {
+                    statusText.setText("No files are being shared on the network right now.");
+                    return;
+                }
+                statusText.setText(filesByName.size() + " file(s) available on the network:");
+                for (java.util.Map.Entry<String, FileInfo> entry : filesByName.entrySet()) {
+                    resultsContainer.addView(
+                            buildResultCard(entry.getValue(), peersByFile.get(entry.getKey())));
+                }
+            });
+        }).start();
+    }
+
     private View buildResultCard(FileInfo fi, List<PeerInfo> peers) {
         // Inflated programmatically for simplicity
         LinearLayout card = new LinearLayout(requireContext());
@@ -101,7 +144,7 @@ public class SearchFragment extends Fragment {
         TextView details = new TextView(requireContext());
         details.setText(formatSize(fi.size) + "  ·  " + peers.size() + " source(s)");
         details.setTextSize(13);
-        details.setTextColor(0xFF6B7080);
+        details.setTextColor(0xFF93A1AE);
         details.setPadding(0, 6, 0, 16);
 
         Button downloadBtn = new Button(requireContext());
@@ -121,7 +164,7 @@ public class SearchFragment extends Fragment {
         AppState state = AppState.get(requireContext());
         File outFile = new File(state.getSharedFolder(), fi.name);
         DownloadManager.DownloadTask task = new DownloadManager.DownloadTask(
-                fi.name, fi.size, outFile, peers);
+                fi.name, fi.size, outFile, peers, fi.checksum);
 
         task.onProgressUpdate = t -> requireActivity().runOnUiThread(() ->
                 btn.setText(t.getProgressText()));

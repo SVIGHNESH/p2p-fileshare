@@ -60,12 +60,24 @@ public class Protocol {
         public String ip;
         public int port;
         public List<FileInfo> files;
+        /**
+         * T0.5: SHA-256 (hex) of this peer's TLS public key — the peer's stable identity, relayed
+         * by the tracker so a downloader can <i>pin</i> the file-transfer connection to this exact
+         * key and reject a man-in-the-middle presenting a different certificate. May be {@code null}
+         * for legacy peers that advertise no key, in which case the downloader cannot pin and falls
+         * back to encryption-only (no authentication).
+         */
+        public String keyId;
 
         public PeerInfo() {}
         public PeerInfo(String ip, int port, List<FileInfo> files) {
+            this(ip, port, files, null);
+        }
+        public PeerInfo(String ip, int port, List<FileInfo> files, String keyId) {
             this.ip = ip;
             this.port = port;
             this.files = files;
+            this.keyId = keyId;
         }
     }
 
@@ -73,11 +85,18 @@ public class Protocol {
         public String ip;
         public int port;
         public List<FileInfo> files;
+        /** T0.5: the registering peer's public-key fingerprint (see {@link PeerInfo#keyId}), which
+         *  the tracker stores and relays to downloaders for transfer-connection pinning. */
+        public String keyId;
 
         public RegisterRequest(String ip, int port, List<FileInfo> files) {
+            this(ip, port, files, null);
+        }
+        public RegisterRequest(String ip, int port, List<FileInfo> files, String keyId) {
             this.ip = ip;
             this.port = port;
             this.files = files;
+            this.keyId = keyId;
         }
     }
 

@@ -1,36 +1,36 @@
 /* Global dark theme for P2P Share desktop app */
 
 .root {
-    -fx-background-color: #0f0f13;
+    -fx-background-color: #0E1419;
     -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
 /* Tab pane */
 .tab-pane > .tab-header-area {
-    -fx-background-color: #16161f;
-    -fx-border-color: #2a2a3a;
+    -fx-background-color: #161F28;
+    -fx-border-color: #26313C;
     -fx-border-width: 0 0 1 0;
 }
 
 .tab-pane > .tab-header-area > .tab-header-background {
-    -fx-background-color: #16161f;
+    -fx-background-color: #161F28;
 }
 
 .tab {
-    -fx-background-color: #16161f;
+    -fx-background-color: #161F28;
     -fx-padding: 10 20 10 20;
     -fx-background-radius: 0;
     -fx-border-width: 0;
 }
 
 .tab:selected {
-    -fx-background-color: #0f0f13;
-    -fx-border-color: #7c6ef7;
+    -fx-background-color: #0E1419;
+    -fx-border-color: #0E8C77;
     -fx-border-width: 0 0 3 0;
 }
 
 .tab .tab-label {
-    -fx-text-fill: #6b7080;
+    -fx-text-fill: #93A1AE;
     -fx-font-size: 14px;
     -fx-font-weight: normal;
 }
@@ -41,24 +41,24 @@
 }
 
 .tab:hover .tab-label {
-    -fx-text-fill: #c0c0d0;
+    -fx-text-fill: #CBD5DF;
 }
 
 /* Scroll bars */
 .scroll-bar:vertical,
 .scroll-bar:horizontal {
-    -fx-background-color: #0f0f13;
+    -fx-background-color: #0E1419;
     -fx-pref-width: 8;
     -fx-pref-height: 8;
 }
 
 .scroll-bar .thumb {
-    -fx-background-color: #3a3a5a;
+    -fx-background-color: #36434F;
     -fx-background-radius: 4;
 }
 
 .scroll-bar .thumb:hover {
-    -fx-background-color: #7c6ef7;
+    -fx-background-color: #0E8C77;
 }
 
 .scroll-bar .increment-button,
@@ -69,7 +69,7 @@
 }
 
 .scroll-pane > .viewport {
-    -fx-background-color: #0f0f13;
+    -fx-background-color: #0E1419;
 }
 
 /* Progress bar */
@@ -79,16 +79,16 @@
 }
 
 .progress-bar > .track {
-    -fx-background-color: #2a2a3a;
+    -fx-background-color: #26313C;
     -fx-background-radius: 5;
     -fx-background-insets: 0;
 }
 
 /* Tooltip */
 .tooltip {
-    -fx-background-color: #1e1e2e;
+    -fx-background-color: #1D2730;
     -fx-text-fill: white;
-    -fx-border-color: #3a3a5a;
+    -fx-border-color: #36434F;
     -fx-border-radius: 6;
     -fx-background-radius: 6;
     -fx-font-size: 12px;
@@ -96,32 +96,32 @@
 
 /* Alert dialogs */
 .dialog-pane {
-    -fx-background-color: #16161f;
+    -fx-background-color: #161F28;
 }
 
 .dialog-pane > .content {
-    -fx-background-color: #16161f;
+    -fx-background-color: #161F28;
     -fx-text-fill: white;
 }
 
 .dialog-pane .label {
-    -fx-text-fill: #c0c0d0;
+    -fx-text-fill: #CBD5DF;
 }
 
 .dialog-pane .button {
-    -fx-background-color: #7c6ef7;
+    -fx-background-color: #0E8C77;
     -fx-text-fill: white;
     -fx-background-radius: 8;
     -fx-cursor: hand;
 }
 
 .dialog-pane .button:hover {
-    -fx-background-color: #9c8ef7;
+    -fx-background-color: #2DBBA0;
 }
 
 /* Text field focus glow */
 .text-field:focused {
-    -fx-border-color: #7c6ef7 !important;
+    -fx-border-color: #0E8C77 !important;
     -fx-effect: dropshadow(gaussian, rgba(124,110,247,0.25), 8, 0, 0, 0);
 }
 

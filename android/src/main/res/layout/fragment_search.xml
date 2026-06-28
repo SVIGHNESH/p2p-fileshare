@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F0F13"
+    android:background="#0E1419"
     android:fillViewport="true">
 
     <LinearLayout
@@ -16,7 +17,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="#13131A"
+            android:background="#121A21"
             android:padding="24dp">
 
             <TextView
@@ -32,7 +33,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Search for files shared by people on the same Wi-Fi as you."
-                android:textColor="#6B7080"
+                android:textColor="#93A1AE"
                 android:textSize="14sp"
                 android:layout_marginBottom="20dp" />
 
@@ -41,7 +42,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
                 android:hint="Type a filename, e.g. lecture_notes.pdf"
-                android:hintTextColor="#555877"
+                android:textColorHint="#5E6B77"
                 android:textColor="#FFFFFF"
                 android:background="@drawable/search_field_bg"
                 android:padding="12dp"
@@ -58,7 +59,20 @@
                 android:textSize="15sp"
                 android:textStyle="bold"
                 android:textColor="#FFFFFF"
-                android:background="@drawable/button_primary" />
+                app:backgroundTint="#0E8C77"
+                app:cornerRadius="10dp" />
+
+            <Button
+                android:id="@+id/browse_button"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="📂  Browse All Files"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#CBD5DF"
+                app:backgroundTint="#26313C"
+                app:cornerRadius="10dp"
+                android:layout_marginTop="12dp" />
 
         </LinearLayout>
 
@@ -77,7 +91,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Search for a file above to see results here."
-            android:textColor="#444460"
+            android:textColor="#4A5662"
             android:textSize="14sp"
             android:padding="24dp" />
 

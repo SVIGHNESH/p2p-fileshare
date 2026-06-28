@@ -18,7 +18,7 @@ public class TransferService extends Service {
         super.onCreate();
         createNotificationChannel();
         startForeground(NOTIF_ID, buildNotification("P2P Share is running", "Ready to share and receive files"));
-        AppState.get(this).init();
+        new Thread(() -> AppState.get(this).init(), "p2p-init").start();
     }
 
     @Override

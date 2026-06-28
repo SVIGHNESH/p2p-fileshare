@@ -44,3 +44,6 @@ desktop.ini
 
 # Android generated libs
 android/libs/
+
+# Downloaded test toolchain (junit console launcher), provisioned by scripts/test.sh
+.test-libs/

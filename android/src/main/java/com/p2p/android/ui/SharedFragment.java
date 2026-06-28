@@ -1,4 +1,5 @@
 package com.p2p.android.ui;
+import com.p2p.android.R;
 
 import android.content.Intent;
 import android.net.Uri;
@@ -50,7 +51,12 @@ public class SharedFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
-        renderFiles();
+        renderFiles(); // show current list immediately
+        // Re-scan (hashing) off the main thread, then re-render.
+        new Thread(() -> {
+            AppState.get(requireContext()).refreshSharedFiles();
+            if (isAdded()) requireActivity().runOnUiThread(this::renderFiles);
+        }).start();
     }
 
     @Override
@@ -58,18 +64,43 @@ public class SharedFragment extends Fragment {
         if (requestCode != PICK_FILE_REQUEST || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         AppState state = AppState.get(requireContext());
-        try {
-            String name = getFileName(uri);
-            File dest = new File(state.getSharedFolder(), name);
-            try (InputStream in = requireContext().getContentResolver().openInputStream(uri)) {
-                Files.copy(in, dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            }
+        String name = getFileName(uri);
+        File dest = new File(state.getSharedFolder(), name);
+
+        if (dest.exists()) {
+            // Already in the shared folder — nothing to copy, it's already shared.
             state.refreshSharedFiles();
             renderFiles();
-            Toast.makeText(requireContext(), "\"" + name + "\" added to sharing!", Toast.LENGTH_SHORT).show();
-        } catch (Exception e) {
-            Toast.makeText(requireContext(), "Could not add file: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(requireContext(), "\"" + name + "\" is already shared", Toast.LENGTH_SHORT).show();
+            return;
         }
+
+        Toast.makeText(requireContext(), "Adding \"" + name + "\"...", Toast.LENGTH_SHORT).show();
+        // Copy off the main thread — large files would otherwise freeze the UI.
+        new Thread(() -> {
+            String error = null;
+            try (InputStream in = requireContext().getContentResolver().openInputStream(uri);
+                 OutputStream outStream = new FileOutputStream(dest)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) != -1) outStream.write(buf, 0, n);
+            } catch (Exception e) {
+                android.util.Log.e("P2PShare", "Add file failed", e);
+                error = e.getMessage();
+                dest.delete(); // clean up partial copy
+            }
+            final String err = error;
+            if (err == null) state.refreshSharedFiles(); // hashing stays off the main thread
+            if (!isAdded()) return;
+            requireActivity().runOnUiThread(() -> {
+                if (err == null) {
+                    renderFiles();
+                    Toast.makeText(requireContext(), "\"" + name + "\" added to sharing!", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(requireContext(), "Could not add file: " + err, Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
     }
 
     private void renderFiles() {
@@ -111,7 +142,7 @@ public class SharedFragment extends Fragment {
 
         TextView details = new TextView(requireContext());
         details.setText(formatSize(fi.size) + "  ·  Shared ✓");
-        details.setTextColor(0xFF4CAF50);
+        details.setTextColor(0xFF46C46A);
         details.setTextSize(12);
 
         meta.addView(name);
@@ -119,14 +150,16 @@ public class SharedFragment extends Fragment {
 
         Button removeBtn = new Button(requireContext());
         removeBtn.setText("Remove");
-        removeBtn.setTextColor(0xFFF44336);
-        removeBtn.setBackgroundColor(0x22F44336);
+        removeBtn.setTextColor(0xFFE5564E);
+        removeBtn.setBackgroundColor(0x22E5564E);
         removeBtn.setOnClickListener(v -> {
             File f = new File(AppState.get(requireContext()).getSharedFolder(), fi.name);
             if (f.delete()) {
-                AppState.get(requireContext()).refreshSharedFiles();
-                renderFiles();
                 Toast.makeText(requireContext(), "Removed from sharing", Toast.LENGTH_SHORT).show();
+                new Thread(() -> {
+                    AppState.get(requireContext()).refreshSharedFiles();
+                    if (isAdded()) requireActivity().runOnUiThread(this::renderFiles);
+                }).start();
             }
         });
 

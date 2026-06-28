@@ -3,7 +3,7 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F0F13"
+    android:background="#0E1419"
     android:fillViewport="true">
 
     <LinearLayout
@@ -16,7 +16,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="#13131A"
+            android:background="#121A21"
             android:padding="24dp">
 
             <TextView
@@ -31,7 +31,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Files you have downloaded or are currently downloading."
-                android:textColor="#6B7080"
+                android:textColor="#93A1AE"
                 android:textSize="13sp"
                 android:layout_marginTop="4dp" />
 
@@ -43,7 +43,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="No downloads yet.\nGo to Search to find and download files."
-            android:textColor="#444460"
+            android:textColor="#4A5662"
             android:textSize="15sp"
             android:gravity="center"
             android:padding="48dp" />

@@ -1,4 +1,5 @@
 package com.p2p.android.ui;
+import com.p2p.android.R;
 
 import android.os.Bundle;
 import android.view.*;
@@ -41,14 +42,18 @@ public class SettingsFragment extends Fragment {
 
             if (state.trackerClient != null && !host.isEmpty()) {
                 state.trackerClient.setTracker(host, state.trackerPort);
-                boolean ok = state.trackerClient.register(
-                        state.myIp,
-                        com.p2p.core.protocol.Protocol.DEFAULT_PEER_PORT,
-                        state.sharedFiles);
-                state.isConnected = ok;
-                Toast.makeText(requireContext(),
-                        ok ? "✓ Connected to tracker!" : "⚠ Could not connect to tracker",
-                        Toast.LENGTH_SHORT).show();
+                new Thread(() -> {
+                    boolean ok = state.trackerClient.register(
+                            state.myIp,
+                            com.p2p.core.protocol.Protocol.DEFAULT_PEER_PORT,
+                            state.sharedFiles);
+                    state.isConnected = ok;
+                    requireActivity().runOnUiThread(() ->
+                        Toast.makeText(requireContext(),
+                                ok ? "✓ Connected to tracker!" : "⚠ Could not connect to tracker",
+                                Toast.LENGTH_SHORT).show()
+                    );
+                }).start();
             }
 
             state.savePrefs();

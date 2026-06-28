@@ -15,14 +15,39 @@ $M2/javafx-graphics/21.0.2/javafx-graphics-21.0.2-linux.jar"
 
 BUILD="$ROOT/build"
 
+CORE_SOURCES="$(mktemp)"; TRACKER_SOURCES="$(mktemp)"; DESKTOP_SOURCES="$(mktemp)"
+trap 'rm -f "$CORE_SOURCES" "$TRACKER_SOURCES" "$DESKTOP_SOURCES"' EXIT
+
 # ── Colours ────────────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+# Only emit ANSI escapes when stdout is a terminal, so CI/log output stays clean.
+if [ -t 1 ]; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; RESET=''
+fi
 
 info()    { echo -e "${CYAN}▸ $*${RESET}"; }
 success() { echo -e "${GREEN}✓ $*${RESET}"; }
 warn()    { echo -e "${YELLOW}⚠ $*${RESET}"; }
 fail()    { echo -e "${RED}✗ $*${RESET}"; exit 1; }
+
+# Compile with javac, filtering only the noisy "Note:" lines for display while
+# preserving javac's real exit code. A bare `javac ... | grep -v "^Note:"`
+# would (a) mask compile failures behind grep's exit code and (b) make clean
+# compiles look like failures, because grep exits 1 when it filters out every
+# line. Capturing output and returning javac's own status fixes both.
+run_javac() {
+    local logfile rc
+    logfile="$(mktemp)"
+    set +e
+    javac "$@" > "$logfile" 2>&1
+    rc=$?
+    set -e
+    grep -v "^Note:" "$logfile" || true
+    rm -f "$logfile"
+    return "$rc"
+}
 
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════╗"
@@ -42,20 +67,21 @@ mkdir -p "$BUILD/core" "$BUILD/tracker" "$BUILD/desktop"
 
 # ── Core ───────────────────────────────────────────────────────────────────
 info "Compiling core module..."
-find "$ROOT/core/src" -name "*.java" > /tmp/p2p_core_sources.txt
-javac --release 17 \
+find "$ROOT/core/src/main" -name "*.java" > "$CORE_SOURCES"
+run_javac --release 17 \
     -cp "$GSON" \
     -d "$BUILD/core" \
-    @/tmp/p2p_core_sources.txt 2>&1 | grep -v "^Note:" || true
+    @"$CORE_SOURCES" || fail "core compilation failed"
+[[ -d "$ROOT/core/src/main/resources" ]] && cp -r "$ROOT/core/src/main/resources/." "$BUILD/core/"
 success "core compiled"
 
 # ── Tracker ────────────────────────────────────────────────────────────────
 info "Compiling tracker module..."
-find "$ROOT/tracker/src" -name "*.java" > /tmp/p2p_tracker_sources.txt
-javac --release 17 \
+find "$ROOT/tracker/src/main" -name "*.java" > "$TRACKER_SOURCES"
+run_javac --release 17 \
     -cp "$GSON:$BUILD/core" \
     -d "$BUILD/tracker" \
-    @/tmp/p2p_tracker_sources.txt 2>&1 | grep -v "^Note:" || true
+    @"$TRACKER_SOURCES" || fail "tracker compilation failed"
 success "tracker compiled"
 
 info "Packaging tracker JAR..."
@@ -73,13 +99,13 @@ success "tracker.jar → build/tracker.jar"
 # ── Desktop ────────────────────────────────────────────────────────────────
 info "Compiling desktop module..."
 cp -r "$ROOT/desktop/src/main/resources/." "$BUILD/desktop/"
-find "$ROOT/desktop/src" -name "*.java" > /tmp/p2p_desktop_sources.txt
-javac --release 17 \
+find "$ROOT/desktop/src/main" -name "*.java" > "$DESKTOP_SOURCES"
+run_javac --release 17 \
     --module-path "$FX_MODS" \
     --add-modules javafx.controls,javafx.graphics \
     -cp "$GSON:$BUILD/core" \
     -d "$BUILD/desktop" \
-    @/tmp/p2p_desktop_sources.txt 2>&1 | grep -v "^Note:" || true
+    @"$DESKTOP_SOURCES" || fail "desktop compilation failed"
 success "desktop compiled"
 
 echo ""

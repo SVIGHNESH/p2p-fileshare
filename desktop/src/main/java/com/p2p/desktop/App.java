@@ -18,14 +18,12 @@ public class App extends Application {
 
     @Override
     public void start(Stage stage) {
-        AppState.get().init();
-
         stage.setTitle("P2P Share");
         stage.setMinWidth(900);
         stage.setMinHeight(640);
 
         BorderPane root = new BorderPane();
-        root.setStyle("-fx-background-color: #0f0f13;");
+        root.setStyle("-fx-background-color: #0E1419;");
 
         // ── Header ──────────────────────────────────────────────────────────
         root.setTop(buildHeader());
@@ -33,7 +31,7 @@ public class App extends Application {
         // ── Tab Navigation ───────────────────────────────────────────────────
         TabPane tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-        tabs.setStyle("-fx-background-color: #0f0f13;");
+        tabs.setStyle("-fx-background-color: #0E1419;");
 
         searchTab   = buildTab("🔍  Search",    new SearchView().build());
         downloadsTab= buildTab("⬇  Downloads", new DownloadsView().build());
@@ -50,17 +48,21 @@ public class App extends Application {
         scene.getStylesheets().add(getClass().getResource("/css/app.css").toExternalForm());
         stage.setScene(scene);
         stage.show();
+
+        // DT.1: paint the window first, then run the blocking startup off the FX
+        // thread. init() returns immediately; state populates the UI as it lands.
+        AppState.get().init();
     }
 
     private HBox buildHeader() {
         HBox header = new HBox(12);
         header.setAlignment(Pos.CENTER_LEFT);
         header.setPadding(new Insets(16, 24, 16, 24));
-        header.setStyle("-fx-background-color: #16161f; -fx-border-color: #2a2a3a; -fx-border-width: 0 0 1 0;");
+        header.setStyle("-fx-background-color: #161F28; -fx-border-color: #26313C; -fx-border-width: 0 0 1 0;");
 
         Label logo = new Label("⬡");
         logo.setFont(Font.font("System", FontWeight.BOLD, 28));
-        logo.setTextFill(Color.web("#7c6ef7"));
+        logo.setTextFill(Color.web("#0E8C77"));
 
         Label appName = new Label("P2P Share");
         appName.setFont(Font.font("System", FontWeight.BOLD, 20));
@@ -68,14 +70,20 @@ public class App extends Application {
 
         Label tagline = new Label("— Secure file sharing on your network");
         tagline.setFont(Font.font("System", 13));
-        tagline.setTextFill(Color.web("#6b7080"));
+        tagline.setTextFill(Color.web("#93A1AE"));
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Label statusDot = new Label(AppState.get().isConnected ? "● Connected" : "● Not connected");
-        statusDot.setTextFill(AppState.get().isConnected ? Color.web("#4caf50") : Color.web("#f44336"));
+        Label statusDot = new Label(AppState.get().isConnected.get() ? "● Connected" : "● Not connected");
+        statusDot.setTextFill(AppState.get().isConnected.get() ? Color.web("#46C46A") : Color.web("#E5564E"));
         statusDot.setFont(Font.font("System", 13));
+        AppState.get().isConnected.addListener((o, ov, connected) ->
+            javafx.application.Platform.runLater(() -> {
+                statusDot.setText(connected ? "● Connected" : "● Not connected");
+                statusDot.setTextFill(connected ? Color.web("#46C46A") : Color.web("#E5564E"));
+            })
+        );
 
         header.getChildren().addAll(logo, appName, tagline, spacer, statusDot);
         return header;
@@ -85,19 +93,22 @@ public class App extends Application {
         HBox bar = new HBox(20);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 20, 8, 20));
-        bar.setStyle("-fx-background-color: #0d0d10; -fx-border-color: #1e1e2a; -fx-border-width: 1 0 0 0;");
+        bar.setStyle("-fx-background-color: #0B1015; -fx-border-color: #26313C; -fx-border-width: 1 0 0 0;");
 
-        Label myIpLabel = new Label("Your IP: " + AppState.get().myIp);
-        myIpLabel.setTextFill(Color.web("#555877"));
+        Label myIpLabel = new Label("Your IP: " + AppState.get().myIpDisplay.get());
+        myIpLabel.setTextFill(Color.web("#5E6B77"));
         myIpLabel.setFont(Font.font("System", 11));
+        // DT.1: the real IP is detected on the background init thread; update the
+        // label when it lands (myIpDisplay is set via Platform.runLater).
+        AppState.get().myIpDisplay.addListener((o, ov, nv) -> myIpLabel.setText("Your IP: " + nv));
 
         Label sharedLabel = new Label("Shared folder: " + AppState.get().sharedFolderPath.get());
-        sharedLabel.setTextFill(Color.web("#555877"));
+        sharedLabel.setTextFill(Color.web("#5E6B77"));
         sharedLabel.setFont(Font.font("System", 11));
         AppState.get().sharedFolderPath.addListener((o, oldV, newV) -> sharedLabel.setText("Shared folder: " + newV));
 
         Label encLabel = new Label("🔒 Encrypted");
-        encLabel.setTextFill(Color.web("#4caf50"));
+        encLabel.setTextFill(Color.web("#46C46A"));
         encLabel.setFont(Font.font("System", 11));
 
         Region spacer = new Region();
@@ -109,7 +120,7 @@ public class App extends Application {
 
     private Tab buildTab(String title, javafx.scene.Node content) {
         Tab tab = new Tab(title, content);
-        tab.setStyle("-fx-background-color: #16161f;");
+        tab.setStyle("-fx-background-color: #161F28;");
         return tab;
     }
 }

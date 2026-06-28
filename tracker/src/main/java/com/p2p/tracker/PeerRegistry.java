@@ -10,6 +10,17 @@ public class PeerRegistry {
 
     private static final long HEARTBEAT_TIMEOUT_MS = 90_000;
 
+    // TR.4: bound the registry's memory footprint. A single peer cannot register more than
+    // MAX_FILES_PER_PEER files or a name longer than MAX_FILENAME_LENGTH, and the tracker stops
+    // admitting brand-new peers past MAX_PEERS. These also feed TrackerServer's request line cap,
+    // which is derived from them so a legitimate max-files register is never rejected as oversized.
+    public static final int MAX_PEERS = 10_000;
+    public static final int MAX_FILES_PER_PEER = 2048;
+    public static final int MAX_FILENAME_LENGTH = 512;
+    // T0.5/TR.4: a legitimate key fingerprint is a 64-char hex SHA-256; cap generously and drop
+    // anything longer so a peer cannot smuggle an unbounded string through the relayed keyId field.
+    public static final int MAX_KEYID_LENGTH = 128;
+
     private final ConcurrentHashMap<String, PeerRecord> peers = new ConcurrentHashMap<>();
 
     public static class PeerRecord {
@@ -22,11 +33,46 @@ public class PeerRegistry {
         }
     }
 
-    public void register(PeerInfo peer) {
+    /**
+     * Registers (or replaces) a peer. Returns {@code false} only when the registry is at its
+     * {@link #MAX_PEERS} capacity and this is a brand-new peer — updates to an already-known peer
+     * are always accepted so a connected peer never gets locked out by a full table.
+     */
+    public boolean register(PeerInfo peer) {
         String key = peer.ip + ":" + peer.port;
+        // TR.3: drop null entries and null/blank-named files at register time so a single peer
+        // cannot poison the registry — an unguarded f.name.equalsIgnoreCase() in findPeersWithFile
+        // would otherwise NPE and break discovery for every querying client.
+        // TR.4: also cap files-per-peer and filename length to bound the registry footprint.
+        peer.files = sanitizeFiles(peer.files);
+        peer.keyId = sanitizeKeyId(peer.keyId);
+        // TR.4: stop admitting new peers past the cap (existing peers may still update in place).
+        if (!peers.containsKey(key) && peers.size() >= MAX_PEERS) {
+            System.out.println("[Registry] Rejected new peer (registry full): " + key);
+            return false;
+        }
         peers.put(key, new PeerRecord(peer));
         System.out.printf("[Registry] Registered %s with %d file(s)%n",
                 key, peer.files != null ? peer.files.size() : 0);
+        return true;
+    }
+
+    private static List<FileInfo> sanitizeFiles(List<FileInfo> files) {
+        if (files == null) return null;
+        List<FileInfo> clean = new ArrayList<>();
+        for (FileInfo f : files) {
+            if (f == null || f.name == null || f.name.isBlank()) continue;
+            if (f.name.length() > MAX_FILENAME_LENGTH) continue; // TR.4: drop absurdly long names
+            clean.add(f);
+            if (clean.size() >= MAX_FILES_PER_PEER) break;       // TR.4: cap files per peer
+        }
+        return clean;
+    }
+
+    /** T0.5: drop a null/blank or over-long keyId so only a plausible fingerprint is relayed. */
+    private static String sanitizeKeyId(String keyId) {
+        if (keyId == null || keyId.isBlank() || keyId.length() > MAX_KEYID_LENGTH) return null;
+        return keyId;
     }
 
     public void unregister(String ip, int port) {
@@ -40,11 +86,13 @@ public class PeerRegistry {
     }
 
     public List<PeerInfo> findPeersWithFile(String filename) {
+        if (filename == null) return new ArrayList<>();
         long now = System.currentTimeMillis();
         return peers.values().stream()
                 .filter(r -> now - r.lastSeen < HEARTBEAT_TIMEOUT_MS)
                 .filter(r -> r.info.files != null &&
-                        r.info.files.stream().anyMatch(f -> f.name.equalsIgnoreCase(filename)))
+                        r.info.files.stream()
+                                .anyMatch(f -> f != null && f.name != null && f.name.equalsIgnoreCase(filename)))
                 .map(r -> r.info)
                 .collect(Collectors.toList());
     }
@@ -72,7 +120,9 @@ public class PeerRegistry {
     public Set<String> getAllFilenames() {
         Set<String> names = new HashSet<>();
         peers.values().forEach(r -> {
-            if (r.info.files != null) r.info.files.forEach(f -> names.add(f.name));
+            if (r.info.files != null) r.info.files.forEach(f -> {
+                if (f != null && f.name != null && !f.name.isBlank()) names.add(f.name);
+            });
         });
         return names;
     }
