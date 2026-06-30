@@ -30,11 +30,9 @@ public class SharingView {
 
         VBox titleBox = new VBox(4);
         Label title = new Label("My Shared Files");
-        title.setFont(Font.font("System", FontWeight.BOLD, 22));
-        title.setTextFill(Color.WHITE);
+        title.getStyleClass().add("page-title");
         Label subtitle = new Label("Files in your shared folder are visible to everyone on the network.");
-        subtitle.setFont(Font.font("System", 13));
-        subtitle.setTextFill(Color.web("#5E6B77"));
+        subtitle.getStyleClass().add("page-subtitle");
         titleBox.getChildren().addAll(title, subtitle);
 
         Region spacer = new Region();
