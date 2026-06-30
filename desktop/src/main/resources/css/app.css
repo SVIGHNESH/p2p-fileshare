@@ -33,6 +33,7 @@
     -fx-text-fill: #93A1AE;
     -fx-font-size: 14px;
     -fx-font-weight: normal;
+    -fx-graphic-text-gap: 9;
 }
 
 .tab:selected .tab-label {
