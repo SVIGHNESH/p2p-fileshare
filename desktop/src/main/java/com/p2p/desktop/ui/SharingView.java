@@ -101,11 +101,19 @@ public class SharingView {
         listBox.getChildren().clear();
         AppState state = AppState.get();
         if (state.sharedFiles.isEmpty()) {
-            Label empty = new Label("You're not sharing any files yet.\nClick \"+ Add File\" to share a file with the network.");
-            empty.setTextFill(Color.web("#4A5662"));
-            empty.setFont(Font.font("System", 15));
-            empty.setTextAlignment(TextAlignment.CENTER);
-            empty.setWrapText(true);
+            // Match the Search/Downloads empty-state treatment: a centered icon
+            // with a primary message and a secondary hint.
+            VBox empty = new VBox(12);
+            empty.setAlignment(Pos.CENTER);
+            empty.setPadding(new Insets(60, 0, 0, 0));
+            Node icon = Icons.icon(Icons.FOLDER, 44, Color.web("#36434F"), 1.6);
+            Label msg = new Label("You're not sharing any files yet.");
+            msg.setTextFill(Color.web("#5E6B77"));
+            msg.setFont(Font.font("System", 15));
+            Label hint = new Label("Click \"Add File\" to share a file with the network.");
+            hint.setTextFill(Color.web("#36434F"));
+            hint.setFont(Font.font("System", 13));
+            empty.getChildren().addAll(icon, msg, hint);
             listBox.getChildren().add(empty);
             return;
         }

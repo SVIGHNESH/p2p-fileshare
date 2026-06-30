@@ -94,11 +94,11 @@ public class DownloadsFragment extends Fragment {
         });
         task.onComplete = t -> requireActivity().runOnUiThread(() -> {
             bar.setProgress(100);
-            status.setText("✓ Complete");
+            status.setText("Complete");
             status.setTextColor(0xFF46C46A);
         });
         task.onError = t -> requireActivity().runOnUiThread(() -> {
-            status.setText("✗ Failed: " + t.errorMessage);
+            status.setText("Failed: " + t.errorMessage);
             status.setTextColor(0xFFE5564E);
         });
 
@@ -157,8 +157,8 @@ public class DownloadsFragment extends Fragment {
         if (s == DownloadManager.DownloadState.CONNECTING)  return "Connecting...";
         if (s == DownloadManager.DownloadState.DOWNLOADING) return "Downloading";
         if (s == DownloadManager.DownloadState.VERIFYING)   return "Verifying...";
-        if (s == DownloadManager.DownloadState.COMPLETE)    return "✓ Complete";
-        if (s == DownloadManager.DownloadState.FAILED)      return "✗ Failed";
+        if (s == DownloadManager.DownloadState.COMPLETE)    return "Complete";
+        if (s == DownloadManager.DownloadState.FAILED)      return "Failed";
         return "Paused";
     }
 

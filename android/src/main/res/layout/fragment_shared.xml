@@ -42,18 +42,16 @@
         android:gravity="center_vertical">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="📂  "
-            android:textSize="15sp" />
-
-        <TextView
             android:id="@+id/folder_path_text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Shared folder: /storage/emulated/0/Download/P2PShare"
             android:textColor="#0E8C77"
-            android:textSize="12sp" />
+            android:textSize="12sp"
+            android:drawableStart="@drawable/ic_folder"
+            android:drawableTint="#0E8C77"
+            android:drawablePadding="10dp"
+            android:gravity="center_vertical" />
 
     </LinearLayout>
 

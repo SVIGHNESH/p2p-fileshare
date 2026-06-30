@@ -55,23 +55,33 @@
                 android:id="@+id/search_button"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
-                android:text="🔍  Search the Network"
+                android:text="Search the Network"
                 android:textSize="15sp"
                 android:textStyle="bold"
                 android:textColor="#FFFFFF"
                 app:backgroundTint="#0E8C77"
-                app:cornerRadius="10dp" />
+                app:cornerRadius="10dp"
+                app:icon="@drawable/ic_search"
+                app:iconGravity="textStart"
+                app:iconPadding="10dp"
+                app:iconSize="18dp"
+                app:iconTint="#FFFFFF" />
 
             <Button
                 android:id="@+id/browse_button"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
-                android:text="📂  Browse All Files"
+                android:text="Browse All Files"
                 android:textSize="15sp"
                 android:textStyle="bold"
                 android:textColor="#CBD5DF"
                 app:backgroundTint="#26313C"
                 app:cornerRadius="10dp"
+                app:icon="@drawable/ic_folder"
+                app:iconGravity="textStart"
+                app:iconPadding="10dp"
+                app:iconSize="18dp"
+                app:iconTint="#CBD5DF"
                 android:layout_marginTop="12dp" />
 
         </LinearLayout>

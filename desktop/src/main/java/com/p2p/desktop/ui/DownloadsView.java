@@ -43,13 +43,12 @@ public class DownloadsView {
 
         AppState state = AppState.get();
 
-        // Empty state
-        Label empty = new Label("No downloads yet.\nGo to Search to find and download files from the network.");
-        empty.setTextFill(Color.web("#4A5662"));
-        empty.setFont(Font.font("System", 15));
-        empty.setTextAlignment(TextAlignment.CENTER);
-        empty.setWrapText(true);
-        empty.setVisible(state.downloads.isEmpty());
+        // Empty state — the same centered icon + message + hint treatment the
+        // Search view uses for its empty results, so all four views are consistent.
+        Node empty = buildEmptyState();
+        boolean isEmpty = state.downloads.isEmpty();
+        empty.setVisible(isEmpty);
+        empty.setManaged(isEmpty);
         list.getChildren().add(empty);
 
         // Bind to observable list
@@ -60,6 +59,7 @@ public class DownloadsView {
                         Node card = buildDownloadCard(task);
                         Platform.runLater(() -> {
                             empty.setVisible(false);
+                            empty.setManaged(false);
                             list.getChildren().add(card);
                         });
                     }
@@ -70,6 +70,21 @@ public class DownloadsView {
         scroll.setContent(list);
         root.getChildren().addAll(header, scroll);
         return root;
+    }
+
+    private Node buildEmptyState() {
+        VBox box = new VBox(12);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(60, 0, 0, 0));
+        Node icon = Icons.icon(Icons.INBOX, 44, Color.web("#36434F"), 1.6);
+        Label msg = new Label("No downloads yet.");
+        msg.setTextFill(Color.web("#5E6B77"));
+        msg.setFont(Font.font("System", 15));
+        Label hint = new Label("Go to Search to find and download files from the network.");
+        hint.setTextFill(Color.web("#36434F"));
+        hint.setFont(Font.font("System", 13));
+        box.getChildren().addAll(icon, msg, hint);
+        return box;
     }
 
     private Node buildDownloadCard(DownloadTask task) {
