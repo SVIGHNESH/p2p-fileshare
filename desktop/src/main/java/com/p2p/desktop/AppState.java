@@ -87,6 +87,24 @@ public class AppState {
     private volatile boolean shuttingDown = false;
 
     /**
+     * The peer-server port actually advertised to the tracker, or {@code -1} when the peer server is
+     * not serving. Set from {@link PeerServer#getBoundPort()} once (and only if) {@code start()}
+     * succeeds. {@code volatile} because it is written on the background init thread and read by the
+     * keep-alive / discovery / reconnect / refresh threads.
+     *
+     * <p>Single source of truth for "what port do we tell the tracker, and may we register at all?".
+     * Every registration site guards on {@code servingPort > 0}. Before this, init/keepalive/refresh/
+     * reconnect/discovery all advertised the hardcoded {@link Protocol#DEFAULT_PEER_PORT} (9001)
+     * regardless of whether the peer server bound, so a TLS-init failure (the server needs the TLS
+     * context, so it never binds) left the desktop registering an unreachable 9001 — poisoning the
+     * tracker so every downloader was handed a dead address and failed to connect. The desktop now
+     * binds an ephemeral port (port 0) and advertises the real bound one; the only remaining bind
+     * failure, with the port OS-assigned, is a TLS failure, already surfaced as "Encryption
+     * unavailable" via {@link #securityOk}.
+     */
+    private volatile int servingPort = -1;
+
+    /**
      * Network-facing LAN IP. {@code volatile} because it is set on the background
      * init thread and later read by the keep-alive / discovery / reconnect threads.
      */
@@ -180,6 +198,18 @@ public class AppState {
     }
 
     /**
+     * Register with the (already-targeted) tracker as a download source — but ONLY when the peer
+     * server is actually listening ({@code servingPort > 0}). Returns {@code false} without touching
+     * the network when we are not serving, so a TLS-init failure never advertises an unreachable
+     * address to the tracker (the poisoning bug this method exists to prevent). The caller is
+     * responsible for any {@code trackerClient.setTracker(...)} target switch before calling.
+     */
+    private boolean registerWithTracker(List<FileInfo> files) {
+        if (servingPort <= 0 || trackerClient == null) return false;
+        return trackerClient.register(myIp, servingPort, files);
+    }
+
+    /**
      * DT.1: non-blocking entry point. All of startup — TLS keygen, the LAN-IP
      * probe, full-folder SHA-256 hashing, the peer-server bind, and up to three
      * blocking tracker registrations — runs on a background daemon thread so the
@@ -214,9 +244,15 @@ public class AppState {
             final List<FileInfo> files = buildFileList(skipped);
             runFx(() -> { sharedFiles.setAll(files); unshareableFiles.setAll(skipped); });
 
-            int port = Protocol.DEFAULT_PEER_PORT;
-            peerServer = new PeerServer(port, this::getSharedFolder);
-            peerServer.start();
+            // Bind an ephemeral peer port (0 -> OS-assigned) and advertise the REAL bound port. A
+            // fixed 9001 collides when two peers share a host and, more importantly, was advertised
+            // even when the bind failed. servingPort is the single source of truth: -1 until/unless
+            // start() succeeds, so every register site below declines to advertise an unreachable
+            // address. The only bind failure left, with the port OS-assigned, is a TLS failure —
+            // already surfaced as "Encryption unavailable" via securityOk.
+            peerServer = new PeerServer(0, this::getSharedFolder);
+            boolean serverUp = peerServer.start();
+            servingPort = serverUp ? peerServer.getBoundPort() : -1;
 
             downloadManager = new DownloadManager();
 
@@ -226,17 +262,18 @@ public class AppState {
             // Use the local `files` snapshot (not the ObservableList, which the FX
             // thread is concurrently populating) and a local boolean for control
             // flow — never the marshalled isConnected property, whose set() may not
-            // have run yet.
+            // have run yet. registerWithTracker() is a no-op when servingPort <= 0, so a
+            // peer server that never bound stays off the tracker instead of poisoning it.
             boolean ok = false;
             String discoveredHost = null;
             if (!trackerHost.get().isBlank()) {
-                ok = trackerClient.register(myIp, port, files);
+                ok = registerWithTracker(files);
             }
 
             // Try localhost first (common case: tracker and desktop on same machine)
             if (!ok) {
                 trackerClient.setTracker("127.0.0.1", tPort);
-                if (trackerClient.register(myIp, port, files)) {
+                if (registerWithTracker(files)) {
                     discoveredHost = "127.0.0.1";
                     ok = true;
                 }
@@ -251,17 +288,17 @@ public class AppState {
                 if (fHost != null) savePrefs();
             });
 
-            // Auto-discover tracker if not configured — retry until found or manually connected
-            if (!ok) {
+            // Auto-discover tracker if not configured — retry until found or manually connected.
+            // Only worth doing when we can actually serve: if the peer server isn't up there's
+            // nothing to register, so don't spin a discovery loop that could only poison a tracker.
+            if (!ok && serverUp) {
                 discovery = new UDPDiscovery();
-                scheduleDiscovery(discovery, port);
+                scheduleDiscovery(discovery);
             }
 
             // Re-register periodically so the tracker doesn't evict us (90s timeout).
             keepAlive.scheduleAtFixedRate(() -> {
-                if (connected && trackerClient != null) {
-                    trackerClient.register(myIp, port, new ArrayList<>(sharedFiles));
-                }
+                if (connected) registerWithTracker(new ArrayList<>(sharedFiles));
             }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
 
             // DT.6: a Runtime shutdown hook covers abnormal termination (SIGTERM / Ctrl-C). The
@@ -297,8 +334,9 @@ public class AppState {
         System.out.println("[AppState] Shutting down — stopping discovery, peer server and downloads.");
         // Stop discovery first so its retry loop cannot relaunch a listener mid-teardown.
         try { if (discovery != null) discovery.stop(); } catch (Exception ignored) {}
-        int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
-        try { if (connected && trackerClient != null) trackerClient.unregister(myIp, port); } catch (Exception ignored) {}
+        // Unregister under the exact port we advertised (servingPort); if we never served
+        // (servingPort <= 0) we were never registered, so there is nothing to unregister.
+        try { if (connected && trackerClient != null && servingPort > 0) trackerClient.unregister(myIp, servingPort); } catch (Exception ignored) {}
         try { if (peerServer != null) peerServer.stop(); } catch (Exception ignored) {}        // releases the accept thread
         try { if (downloadManager != null) downloadManager.shutdown(); } catch (Exception ignored) {}
         keepAlive.shutdownNow();
@@ -331,16 +369,17 @@ public class AppState {
                 return t;
             });
 
-    private void scheduleDiscovery(UDPDiscovery disc, int peerPort) {
+    private void scheduleDiscovery(UDPDiscovery disc) {
         // The callback fires on the discovery thread (DT.2): keep the blocking
         // network calls here, but marshal every write to live UI state — the
         // trackerHost/trackerPort properties are bound bidirectionally to the
-        // Settings text fields — onto the FX thread.
+        // Settings text fields — onto the FX thread. Registration goes through
+        // registerWithTracker(), so the advertised port is always the real bound one.
         disc.listenForTracker(found -> {
             if (found != null) {
                 String[] parts = found.split(":");
                 trackerClient.setTracker(parts[0], Integer.parseInt(parts[1]));
-                boolean ok = trackerClient.register(myIp, peerPort, new ArrayList<>(sharedFiles));
+                boolean ok = registerWithTracker(new ArrayList<>(sharedFiles));
                 connected = ok;
                 runFx(() -> {
                     trackerHost.set(parts[0]);
@@ -352,7 +391,7 @@ public class AppState {
                 // Timed out, still not connected — keep retrying. A stale tracker
                 // host saved from a previous network must not stop discovery.
                 // (DT.6: but stop retrying once shutdown has begun so the JVM can exit.)
-                scheduleDiscovery(disc, peerPort);
+                scheduleDiscovery(disc);
             }
         });
     }
@@ -367,10 +406,13 @@ public class AppState {
      */
     public ReconnectResult reconnect() {
         if (trackerClient == null || trackerHost.get().isBlank()) return ReconnectResult.AUTO_DISCOVER;
-        int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
+        // If the peer server never bound (servingPort <= 0 — a TLS failure, already shown as the
+        // "Encryption unavailable" card right here in Settings), registering would advertise an
+        // unreachable address, so don't. There is nothing to connect as a source.
+        if (servingPort <= 0) return ReconnectResult.UNREACHABLE;
         int tPort = parseTrackerPort(trackerPort.get());
         trackerClient.setTracker(trackerHost.get(), tPort);
-        boolean ok = trackerClient.register(myIp, port, new ArrayList<>(sharedFiles));
+        boolean ok = registerWithTracker(new ArrayList<>(sharedFiles));
         connected = ok;
         runFx(() -> isConnected.set(ok));
         return ok ? ReconnectResult.CONNECTED : ReconnectResult.UNREACHABLE;
@@ -395,9 +437,8 @@ public class AppState {
             // FX-bound isConnected property (whose marshalled set may not have run yet). Register
             // with the freshly built local snapshot — never the live ObservableList the FX thread
             // is concurrently populating — avoiding the ConcurrentModificationException DT.8 flags.
-            if (connected && trackerClient != null) {
-                int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
-                trackerClient.register(myIp, port, files);
+            if (connected) {
+                registerWithTracker(files);
             }
         });
     }
