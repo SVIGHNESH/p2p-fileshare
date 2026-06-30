@@ -29,11 +29,45 @@ public class AppState {
         return instance;
     }
 
+    private AppState() {
+        // DT.8: keep the background-thread mirror of autoDiscover in sync with the FX-bound property,
+        // persist the choice immediately, and apply it to the live connection. Registered here (not at
+        // the field) so it never fires during field initialization — only on a genuine user change.
+        autoDiscover.addListener((obs, was, now) -> onAutoDiscoverChanged(now));
+    }
+
     private final Preferences prefs = Preferences.userNodeForPackage(AppState.class);
 
     // Persisted settings
     public final StringProperty trackerHost = new SimpleStringProperty(prefs.get("trackerHost", ""));
     public final StringProperty trackerPort = new SimpleStringProperty(prefs.get("trackerPort", "9000"));
+
+    /**
+     * DT.8: whether to auto-discover a tracker on the LAN (true) or connect only to the manually
+     * configured {@link #trackerHost} (false). Previously auto-discovery was <i>inferred</i> from
+     * {@code trackerHost} being blank, so the Settings auto-discover toggle was cosmetic — turning it
+     * "off" persisted nothing and the app kept auto-discovering, the same "Settings UI lies about its
+     * state" class of bug fixed in DT.5 and DT.7. This is now an explicit, persisted preference that
+     * the connection logic actually honors. On upgrade (no {@code autoDiscover} key yet) we default to
+     * {@code true} rather than inferring from {@code trackerHost}: the OLD code persisted trackerHost on
+     * EVERY successful auto-connect (the discovery callback and the localhost fast-path both did
+     * {@code trackerHost.set(...); savePrefs()}), so a non-blank saved host is just as likely to be
+     * auto-discovery pollution as a deliberate manual entry. Keying the default off it would wrongly
+     * flip existing auto-discovery users (the recommended path) to manual mode and strip their discovery
+     * fallback, leaving them "Not connected" if the tracker's IP changed. There is no reliable
+     * "manual was chosen" signal in old prefs, so default-on is the lower-harm choice: a genuine manual
+     * user gets auto-discovery once (their host is preserved, and auto likely finds the same LAN tracker)
+     * and can toggle it off, whereas the auto-discovery population keeps working untouched.
+     */
+    public final BooleanProperty autoDiscover =
+            new SimpleBooleanProperty(prefs.getBoolean("autoDiscover", true));
+
+    /**
+     * Background-thread source of truth for {@link #autoDiscover}: the JavaFX property must be touched
+     * on the FX thread, so the init/discovery/reconnect paths (all off-thread) branch on this volatile
+     * mirror, kept in lockstep by the listener registered in the constructor.
+     */
+    private volatile boolean autoDiscoverEnabled = autoDiscover.get();
     public final StringProperty sharedFolderPath = new SimpleStringProperty(
             prefs.get("sharedFolder", System.getProperty("user.home") + "/P2PShare"));
     public final StringProperty myDisplayName = new SimpleStringProperty(
@@ -87,6 +121,14 @@ public class AppState {
     private volatile boolean shuttingDown = false;
 
     /**
+     * DT.8: guards against running two concurrent UDP discovery listen loops. Set true while a loop is
+     * active so {@link #startDiscoveryLoop()} is idempotent (init and a runtime auto-discover toggle can
+     * both ask to start one), and cleared when the loop stops (connected, shutting down, or
+     * auto-discover turned off).
+     */
+    private volatile boolean discoveryLoopActive = false;
+
+    /**
      * The peer-server port actually advertised to the tracker, or {@code -1} when the peer server is
      * not serving. Set from {@link PeerServer#getBoundPort()} once (and only if) {@code start()}
      * succeeds. {@code volatile} because it is written on the background init thread and read by the
@@ -118,6 +160,7 @@ public class AppState {
         prefs.put("trackerPort", trackerPort.get());
         prefs.put("sharedFolder", sharedFolderPath.get());
         prefs.put("displayName", myDisplayName.get());
+        prefs.putBoolean("autoDiscover", autoDiscover.get());
     }
 
     /** Outcome of a manual {@link #reconnect()}, so the Settings Save button can report the
@@ -264,36 +307,32 @@ public class AppState {
             // flow — never the marshalled isConnected property, whose set() may not
             // have run yet. registerWithTracker() is a no-op when servingPort <= 0, so a
             // peer server that never bound stays off the tracker instead of poisoning it.
+            //
+            // DT.8: branch on the explicit autoDiscover preference instead of inferring the mode from a
+            // blank trackerHost. In manual mode we register with the configured tracker ONLY — no
+            // localhost fallback and no discovery loop — so an unreachable manual host fails honestly
+            // rather than silently auto-discovering some other tracker. In auto mode we ignore the
+            // manual host entirely, try the same-machine tracker as a fast path, then fall back to UDP
+            // discovery. The discovered/localhost address is deliberately NOT written back into
+            // trackerHost: that property is the user's manual config and the manual field reflects it,
+            // so auto-discovery no longer pollutes it (which was the root of the inference bug).
             boolean ok = false;
-            String discoveredHost = null;
-            if (!trackerHost.get().isBlank()) {
-                ok = registerWithTracker(files);
-            }
-
-            // Try localhost first (common case: tracker and desktop on same machine)
-            if (!ok) {
+            if (autoDiscoverEnabled) {
                 trackerClient.setTracker("127.0.0.1", tPort);
-                if (registerWithTracker(files)) {
-                    discoveredHost = "127.0.0.1";
-                    ok = true;
-                }
+                ok = registerWithTracker(files);
+            } else if (!trackerHost.get().isBlank()) {
+                ok = registerWithTracker(files);
             }
 
             connected = ok;
             final boolean fOk = ok;
-            final String fHost = discoveredHost;
-            runFx(() -> {
-                if (fHost != null) trackerHost.set(fHost);
-                isConnected.set(fOk);
-                if (fHost != null) savePrefs();
-            });
+            runFx(() -> isConnected.set(fOk));
 
-            // Auto-discover tracker if not configured — retry until found or manually connected.
-            // Only worth doing when we can actually serve: if the peer server isn't up there's
-            // nothing to register, so don't spin a discovery loop that could only poison a tracker.
-            if (!ok && serverUp) {
-                discovery = new UDPDiscovery();
-                scheduleDiscovery(discovery);
+            // Auto-discover the tracker only in auto mode and only when we can actually serve: if the
+            // peer server isn't up there's nothing to register, so don't spin a discovery loop that
+            // could only poison a tracker.
+            if (!ok && serverUp && autoDiscoverEnabled) {
+                startDiscoveryLoop();
             }
 
             // Re-register periodically so the tracker doesn't evict us (90s timeout).
@@ -369,31 +408,81 @@ public class AppState {
                 return t;
             });
 
+    /**
+     * DT.8: starts the UDP auto-discovery retry loop, or no-ops if one is already running. Idempotent
+     * (guarded by {@link #discoveryLoopActive}) because both startup and a runtime auto-discover toggle
+     * can ask to start it. Caller must already be in auto-discover mode and able to serve.
+     */
+    private synchronized void startDiscoveryLoop() {
+        if (discoveryLoopActive || shuttingDown) return;
+        if (discovery == null) discovery = new UDPDiscovery();
+        discoveryLoopActive = true;
+        System.out.println("[AppState] Auto-discovering a tracker on the local network...");
+        scheduleDiscovery(discovery);
+    }
+
+    /** DT.8: stops the auto-discovery loop so the app stops trying to find a tracker (toggle → off). */
+    private void stopDiscoveryLoop() {
+        if (!discoveryLoopActive) return;
+        discoveryLoopActive = false;
+        System.out.println("[AppState] Auto-discovery disabled — no longer searching for a tracker.");
+        try { if (discovery != null) discovery.stop(); } catch (Exception ignored) {}
+    }
+
     private void scheduleDiscovery(UDPDiscovery disc) {
-        // The callback fires on the discovery thread (DT.2): keep the blocking
-        // network calls here, but marshal every write to live UI state — the
-        // trackerHost/trackerPort properties are bound bidirectionally to the
-        // Settings text fields — onto the FX thread. Registration goes through
-        // registerWithTracker(), so the advertised port is always the real bound one.
+        // The callback fires on the discovery thread (DT.2): keep the blocking network calls here, but
+        // marshal the isConnected write onto the FX thread. Registration goes through
+        // registerWithTracker(), so the advertised port is always the real bound one. DT.8: the
+        // discovered tracker address is set on trackerClient (so re-registers reach it) but is NOT
+        // written into the trackerHost property — that property is the user's manual config and
+        // auto-discovery must not overwrite it (the inference bug). The loop keeps retrying only while
+        // disconnected, not shutting down, and still in auto-discover mode; otherwise it winds down.
         disc.listenForTracker(found -> {
             if (found != null) {
                 String[] parts = found.split(":");
                 trackerClient.setTracker(parts[0], Integer.parseInt(parts[1]));
                 boolean ok = registerWithTracker(new ArrayList<>(sharedFiles));
                 connected = ok;
-                runFx(() -> {
-                    trackerHost.set(parts[0]);
-                    trackerPort.set(parts[1]);
-                    isConnected.set(ok);
-                    savePrefs();
-                });
-            } else if (!connected && !shuttingDown) {
-                // Timed out, still not connected — keep retrying. A stale tracker
-                // host saved from a previous network must not stop discovery.
-                // (DT.6: but stop retrying once shutdown has begun so the JVM can exit.)
+                runFx(() -> isConnected.set(ok));
+            }
+            if (!connected && !shuttingDown && autoDiscoverEnabled) {
                 scheduleDiscovery(disc);
+            } else {
+                discoveryLoopActive = false;
             }
         });
+    }
+
+    /**
+     * DT.8: applies a runtime change to {@link #autoDiscover} (the Settings switch, or a manual-host
+     * edit that flips it off). Persists the choice immediately and reconfigures the live connection so
+     * the toggle is honest, not cosmetic: turning auto-discovery ON kicks off the same-machine attempt
+     * + discovery loop when we're not already connected, and turning it OFF stops the loop so the app
+     * genuinely stops searching. The fired-on-the-FX-thread listener does the persist inline (cheap) and
+     * the network work on a short-lived daemon thread. A pre-init change (no peer server yet) only needs
+     * the persist — the choice is then honored when {@link #initBlocking} runs.
+     */
+    private void onAutoDiscoverChanged(boolean enabled) {
+        autoDiscoverEnabled = enabled;
+        prefs.putBoolean("autoDiscover", enabled);
+        if (peerServer == null || trackerClient == null || shuttingDown) return;
+        Thread t = new Thread(() -> {
+            if (enabled) {
+                if (!connected && servingPort > 0) {
+                    trackerClient.setTracker("127.0.0.1", parseTrackerPort(trackerPort.get()));
+                    if (registerWithTracker(new ArrayList<>(sharedFiles))) {
+                        connected = true;
+                        runFx(() -> isConnected.set(true));
+                    } else {
+                        startDiscoveryLoop();
+                    }
+                }
+            } else {
+                stopDiscoveryLoop();
+            }
+        }, "auto-discover-apply");
+        t.setDaemon(true);
+        t.start();
     }
 
     /**
@@ -405,7 +494,10 @@ public class AppState {
      * letting the caller give honest feedback instead of an unconditional "Saved!".
      */
     public ReconnectResult reconnect() {
-        if (trackerClient == null || trackerHost.get().isBlank()) return ReconnectResult.AUTO_DISCOVER;
+        // DT.8: in auto-discover mode there is no manual host to verify — the discovery loop owns the
+        // connection — so report AUTO_DISCOVER. (Previously this only checked for a blank host.)
+        if (trackerClient == null || autoDiscoverEnabled || trackerHost.get().isBlank())
+            return ReconnectResult.AUTO_DISCOVER;
         // If the peer server never bound (servingPort <= 0 — a TLS failure, already shown as the
         // "Encryption unavailable" card right here in Settings), registering would advertise an
         // unreachable address, so don't. There is nothing to connect as a source.

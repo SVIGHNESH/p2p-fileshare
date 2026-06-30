@@ -134,19 +134,11 @@ public class SettingsView {
         b.setWrapText(true);
         text.getChildren().addAll(t, b);
 
-        ToggleButton toggle = new ToggleButton(state.trackerHost.get().isEmpty() ? "ON" : "OFF");
-        toggle.setSelected(state.trackerHost.get().isEmpty());
-        toggle.setFont(Font.font("System", FontWeight.BOLD, 13));
-        toggle.setStyle(toggle.isSelected()
-                ? "-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 20;"
-                : "-fx-background-color: #26313C; -fx-text-fill: #888; -fx-background-radius: 20;");
-        toggle.selectedProperty().addListener((o, ov, nv) -> {
-            toggle.setText(nv ? "ON" : "OFF");
-            toggle.setStyle(nv
-                    ? "-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 20;"
-                    : "-fx-background-color: #26313C; -fx-text-fill: #888; -fx-background-radius: 20;");
-            if (nv) state.trackerHost.set(""); // Clear manual host → enable autodiscovery
-        });
+        // DT.8: a real sliding switch bound to the explicit autoDiscover preference, replacing the bare
+        // ON/OFF text ToggleButton whose "off" state did nothing (auto-discovery was inferred from a
+        // blank host, so toggling off changed neither the persisted setting nor the behavior). The
+        // switch reflects and drives AppState.autoDiscover, which the connection logic now honors.
+        ToggleSwitch toggle = new ToggleSwitch(state.autoDiscover);
 
         card.getChildren().addAll(text, toggle);
         return card;
@@ -171,6 +163,10 @@ public class SettingsView {
         HBox.setHgrow(hostField, Priority.ALWAYS);
         hostField.setStyle(fieldStyle());
         hostField.textProperty().bindBidirectional(state.trackerHost);
+        // DT.8: typing a manual tracker address means the user wants manual mode, so flip auto-discover
+        // off. onKeyTyped fires only for real keystrokes — never for the programmatic setText the
+        // bidirectional binding does — so this can't be tripped by state updates, only by the user.
+        hostField.setOnKeyTyped(e -> state.autoDiscover.set(false));
 
         TextField portField = new TextField();
         portField.setPromptText("Port");
