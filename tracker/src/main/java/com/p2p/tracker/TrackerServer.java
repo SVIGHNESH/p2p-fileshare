@@ -212,8 +212,10 @@ public class TrackerServer {
                     if (req == null || !validPort(req.port)) return error("Invalid REGISTER payload");
                     // T0.5: carry the peer's advertised public-key fingerprint into the registry so it
                     // is relayed to downloaders for transfer-connection pinning (PeerRegistry caps its
-                    // length). The IP is still the socket source (TR.2), never the payload.
-                    return registry.register(new PeerInfo(clientIp, req.port, req.files, req.keyId))
+                    // length). The IP is still the socket source (TR.2), never the payload. The cosmetic
+                    // displayName is likewise payload-claimed and forgeable, so PeerRegistry sanitizes it
+                    // (strips control chars/newlines, caps length) before it is ever relayed to a querier.
+                    return registry.register(new PeerInfo(clientIp, req.port, req.files, req.keyId, req.displayName))
                             ? new Message(MessageType.HEARTBEAT, "OK")
                             : error("Registry at capacity");
                 }

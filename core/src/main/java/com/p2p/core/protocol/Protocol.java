@@ -68,16 +68,28 @@ public class Protocol {
          * back to encryption-only (no authentication).
          */
         public String keyId;
+        /**
+         * A human-friendly nickname the peer chose for itself, relayed by the tracker so UIs can show
+         * "shared by &lt;name&gt;" instead of a bare IP. Purely <b>cosmetic</b> and <b>unauthenticated</b>:
+         * unlike {@link #keyId} (the pinned cryptographic identity) it is a payload-claimed string any
+         * peer can set to anything, so the tracker sanitizes it (see {@code PeerRegistry}) and the UI must
+         * present it as a label, never as proof of identity. May be {@code null} when the peer set no name.
+         */
+        public String displayName;
 
         public PeerInfo() {}
         public PeerInfo(String ip, int port, List<FileInfo> files) {
             this(ip, port, files, null);
         }
         public PeerInfo(String ip, int port, List<FileInfo> files, String keyId) {
+            this(ip, port, files, keyId, null);
+        }
+        public PeerInfo(String ip, int port, List<FileInfo> files, String keyId, String displayName) {
             this.ip = ip;
             this.port = port;
             this.files = files;
             this.keyId = keyId;
+            this.displayName = displayName;
         }
     }
 
@@ -88,15 +100,22 @@ public class Protocol {
         /** T0.5: the registering peer's public-key fingerprint (see {@link PeerInfo#keyId}), which
          *  the tracker stores and relays to downloaders for transfer-connection pinning. */
         public String keyId;
+        /** The peer's chosen nickname (see {@link PeerInfo#displayName}); cosmetic and sanitized by
+         *  the tracker before it is relayed. */
+        public String displayName;
 
         public RegisterRequest(String ip, int port, List<FileInfo> files) {
             this(ip, port, files, null);
         }
         public RegisterRequest(String ip, int port, List<FileInfo> files, String keyId) {
+            this(ip, port, files, keyId, null);
+        }
+        public RegisterRequest(String ip, int port, List<FileInfo> files, String keyId, String displayName) {
             this.ip = ip;
             this.port = port;
             this.files = files;
             this.keyId = keyId;
+            this.displayName = displayName;
         }
     }
 

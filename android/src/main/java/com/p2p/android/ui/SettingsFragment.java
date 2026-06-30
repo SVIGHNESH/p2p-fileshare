@@ -46,7 +46,8 @@ public class SettingsFragment extends Fragment {
                     boolean ok = state.trackerClient.register(
                             state.myIp,
                             com.p2p.core.protocol.Protocol.DEFAULT_PEER_PORT,
-                            state.sharedFiles);
+                            state.sharedFiles,
+                            state.myDisplayName.get());
                     state.isConnected = ok;
                     requireActivity().runOnUiThread(() ->
                         Toast.makeText(requireContext(),

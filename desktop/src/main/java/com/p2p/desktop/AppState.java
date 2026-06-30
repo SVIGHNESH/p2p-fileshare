@@ -34,6 +34,10 @@ public class AppState {
         // persist the choice immediately, and apply it to the live connection. Registered here (not at
         // the field) so it never fires during field initialization — only on a genuine user change.
         autoDiscover.addListener((obs, was, now) -> onAutoDiscoverChanged(now));
+        // Keep the off-thread displayName mirror in lockstep with the FX-bound property (the Settings
+        // field binds bidirectionally to it). The next keep-alive/refresh re-register then advertises
+        // the new name; tracker eviction is 90s, so a rename propagates well within one keep-alive cycle.
+        myDisplayName.addListener((obs, was, now) -> displayName = now);
     }
 
     private final Preferences prefs = Preferences.userNodeForPackage(AppState.class);
@@ -72,6 +76,16 @@ public class AppState {
             prefs.get("sharedFolder", System.getProperty("user.home") + "/P2PShare"));
     public final StringProperty myDisplayName = new SimpleStringProperty(
             prefs.get("displayName", System.getProperty("user.name")));
+
+    /**
+     * Background-thread mirror of {@link #myDisplayName}: the JavaFX property must be read on the FX
+     * thread, so the off-thread register sites (init, keep-alive, refresh, reconnect, discovery) read
+     * this {@code volatile} snapshot instead. Kept in lockstep by a listener registered in the
+     * constructor (same pattern as {@link #autoDiscoverEnabled} and {@link #myIp}). This is the
+     * cosmetic nickname advertised to the tracker so other peers see "shared by &lt;name&gt;"; the
+     * tracker sanitizes it before relaying.
+     */
+    private volatile String displayName = myDisplayName.get();
 
     // Runtime components
     public TrackerClient trackerClient;
@@ -249,7 +263,10 @@ public class AppState {
      */
     private boolean registerWithTracker(List<FileInfo> files) {
         if (servingPort <= 0 || trackerClient == null) return false;
-        return trackerClient.register(myIp, servingPort, files);
+        // Advertise the cosmetic display nickname so other peers' UIs can show "shared by <name>"
+        // (DT.8: the Settings "visible to others on the network" copy is now truthful — the name
+        // actually travels). Read the volatile mirror, never the FX property, off-thread.
+        return trackerClient.register(myIp, servingPort, files, displayName);
     }
 
     /**

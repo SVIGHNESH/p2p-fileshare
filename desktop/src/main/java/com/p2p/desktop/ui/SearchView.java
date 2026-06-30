@@ -219,6 +219,19 @@ public class SearchView {
 
         meta.getChildren().addAll(nameLabel, details);
 
+        // DT.8: show WHO is sharing, using the peers' self-chosen (cosmetic, tracker-sanitized)
+        // display names. This is what makes the Settings "visible to others on the network" copy
+        // truthful. Omitted entirely when no sharer set a name, so the card never shows a stray label.
+        String sharer = sharerLabel(peers);
+        if (sharer != null) {
+            Label sharedBy = new Label(sharer);
+            sharedBy.setTextFill(Color.web("#6E7C89"));
+            sharedBy.setFont(Font.font("System", 12));
+            HBox sharedByRow = new HBox(6, Icons.icon(Icons.USER, 12, Color.web("#6E7C89")), sharedBy);
+            sharedByRow.setAlignment(Pos.CENTER_LEFT);
+            meta.getChildren().add(sharedByRow);
+        }
+
         Button downloadBtn = new Button("Download");
         downloadBtn.setFont(Font.font("System", FontWeight.BOLD, 13));
         downloadBtn.setGraphic(Icons.icon(Icons.DOWNLOAD, 15, Color.WHITE, 2.0));
@@ -332,6 +345,28 @@ public class SearchView {
         b.setWrapText(true);
         box.getChildren().addAll(titleRow, b);
         return box;
+    }
+
+    /**
+     * Build the cosmetic "Shared by …" line for a result card from the peers' display names, or
+     * {@code null} when no peer advertised one. Names are distinct (a file is often on several peers),
+     * order-preserving, and already sanitized to a single line by the tracker. Long sharer lists are
+     * summarized ("alice, bob and 3 others") so the card height stays fixed regardless of peer count.
+     */
+    private static String sharerLabel(List<PeerInfo> peers) {
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (PeerInfo p : peers) {
+            if (p != null && p.displayName != null && !p.displayName.isBlank()) {
+                names.add(p.displayName.trim());
+            }
+        }
+        if (names.isEmpty()) return null;
+        List<String> list = new ArrayList<>(names);
+        if (list.size() == 1) return "Shared by " + list.get(0);
+        if (list.size() == 2) return "Shared by " + list.get(0) + " and " + list.get(1);
+        int others = list.size() - 2;
+        return "Shared by " + list.get(0) + ", " + list.get(1) +
+                " and " + others + (others == 1 ? " other" : " others");
     }
 
     private String formatSize(long bytes) {

@@ -20,6 +20,9 @@ public class PeerRegistry {
     // T0.5/TR.4: a legitimate key fingerprint is a 64-char hex SHA-256; cap generously and drop
     // anything longer so a peer cannot smuggle an unbounded string through the relayed keyId field.
     public static final int MAX_KEYID_LENGTH = 128;
+    // The cosmetic displayName is payload-claimed (forgeable, like the keyId), so it is bounded too;
+    // a nickname has no reason to exceed this and the tracker truncates anything longer.
+    public static final int MAX_DISPLAYNAME_LENGTH = 64;
 
     private final ConcurrentHashMap<String, PeerRecord> peers = new ConcurrentHashMap<>();
 
@@ -46,6 +49,7 @@ public class PeerRegistry {
         // TR.4: also cap files-per-peer and filename length to bound the registry footprint.
         peer.files = sanitizeFiles(peer.files);
         peer.keyId = sanitizeKeyId(peer.keyId);
+        peer.displayName = sanitizeDisplayName(peer.displayName);
         // TR.4: stop admitting new peers past the cap (existing peers may still update in place).
         if (!peers.containsKey(key) && peers.size() >= MAX_PEERS) {
             System.out.println("[Registry] Rejected new peer (registry full): " + key);
@@ -73,6 +77,39 @@ public class PeerRegistry {
     private static String sanitizeKeyId(String keyId) {
         if (keyId == null || keyId.isBlank() || keyId.length() > MAX_KEYID_LENGTH) return null;
         return keyId;
+    }
+
+    /**
+     * Clean a payload-claimed display nickname before it is stored and relayed to other peers'
+     * UIs. The tracker is the trust boundary here (TR.2): the name is forgeable and rendered in
+     * remote UIs, so this is a <i>content</i> sanitizer, not just a length cap — it strips control
+     * characters and any embedded newline/tab so a crafted name cannot break the layout of a result
+     * card or smuggle a second visual line, collapses internal whitespace runs to single spaces, trims
+     * the ends, then caps the length. A name that is null, empty, or whitespace-/control-only after
+     * cleaning becomes {@code null} (advertise no name) rather than an empty string.
+     */
+    static String sanitizeDisplayName(String name) {
+        if (name == null) return null;
+        StringBuilder sb = new StringBuilder(Math.min(name.length(), MAX_DISPLAYNAME_LENGTH));
+        boolean pendingSpace = false;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            // Treat every ISO control char (newline, tab, CR, NUL, …) and any whitespace as a space,
+            // then collapse runs so a crafted name cannot inject a second visual line into a card.
+            if (Character.isISOControl(c) || Character.isWhitespace(c)) {
+                pendingSpace = sb.length() > 0; // never lead with a space
+                continue;
+            }
+            if (pendingSpace) {
+                if (sb.length() + 1 >= MAX_DISPLAYNAME_LENGTH) break; // no room for "<space><char>"
+                sb.append(' ');
+                pendingSpace = false;
+            }
+            sb.append(c);
+            if (sb.length() >= MAX_DISPLAYNAME_LENGTH) break;
+        }
+        String cleaned = sb.toString();
+        return cleaned.isEmpty() ? null : cleaned;
     }
 
     public void unregister(String ip, int port) {
