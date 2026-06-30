@@ -74,6 +74,34 @@ public class AppState {
         prefs.put("displayName", myDisplayName.get());
     }
 
+    /** Outcome of a manual {@link #reconnect()}, so the Settings Save button can report the
+     *  real result instead of unconditionally flashing "Saved!" (DT.5). */
+    public enum ReconnectResult {
+        /** A manual tracker was configured and the registration succeeded. */
+        CONNECTED,
+        /** A manual tracker was configured but could not be reached. */
+        UNREACHABLE,
+        /** No manual tracker is set (auto-discovery mode); nothing to verify synchronously. */
+        AUTO_DISCOVER
+    }
+
+    /**
+     * Parse the user-entered tracker port (DT.5). The Settings field is digit-restricted by a
+     * {@code TextFormatter}, but a blank field or a stale/hand-edited preference could still hold a
+     * blank or out-of-range value, so this is defensive: blank or anything outside 1..65535 falls
+     * back to the default 9000 instead of throwing. Previously a non-numeric value made
+     * {@code Integer.parseInt} throw inside {@link #reconnect()} on the Save worker thread — the
+     * worker died silently while the button still reported success.
+     */
+    static int parseTrackerPort(String raw) {
+        if (raw == null || raw.isBlank()) return 9000;
+        try {
+            int p = Integer.parseInt(raw.trim());
+            if (p >= 1 && p <= 65535) return p;
+        } catch (NumberFormatException ignored) {}
+        return 9000;
+    }
+
     /** Determine the real LAN IP via a connected UDP socket (no packets sent). */
     private String detectLanIp() {
         try (java.net.DatagramSocket s = new java.net.DatagramSocket()) {
@@ -145,7 +173,7 @@ public class AppState {
 
             downloadManager = new DownloadManager();
 
-            int tPort = Integer.parseInt(trackerPort.get().isBlank() ? "9000" : trackerPort.get());
+            int tPort = parseTrackerPort(trackerPort.get());
             trackerClient = new TrackerClient(trackerHost.get(), tPort);
 
             // Use the local `files` snapshot (not the ObservableList, which the FX
@@ -254,16 +282,23 @@ public class AppState {
         });
     }
 
-    /** Called off the FX thread (Settings "Save" spawns a worker), so the
-     *  isConnected write is marshalled back. */
-    public void reconnect() {
-        if (trackerHost.get().isBlank() || trackerClient == null) return;
+    /**
+     * Re-register with the manually-configured tracker and report the real outcome (DT.5).
+     * Called off the FX thread (Settings "Save" spawns a worker), so the {@code isConnected}
+     * write is marshalled back. Returns {@link ReconnectResult#AUTO_DISCOVER} when no manual
+     * host is set (auto-discovery owns the connection then, so there is nothing to verify
+     * synchronously here), and otherwise CONNECTED/UNREACHABLE per the registration result —
+     * letting the caller give honest feedback instead of an unconditional "Saved!".
+     */
+    public ReconnectResult reconnect() {
+        if (trackerClient == null || trackerHost.get().isBlank()) return ReconnectResult.AUTO_DISCOVER;
         int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
-        int tPort = Integer.parseInt(trackerPort.get().isBlank() ? "9000" : trackerPort.get());
+        int tPort = parseTrackerPort(trackerPort.get());
         trackerClient.setTracker(trackerHost.get(), tPort);
         boolean ok = trackerClient.register(myIp, port, new ArrayList<>(sharedFiles));
         connected = ok;
         runFx(() -> isConnected.set(ok));
+        return ok ? ReconnectResult.CONNECTED : ReconnectResult.UNREACHABLE;
     }
 
     /**

@@ -12,8 +12,14 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
 import java.io.File;
+import java.util.function.UnaryOperator;
 
 public class SettingsView {
+
+    private static final String SAVE_IDLE_STYLE =
+            "-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 10; -fx-cursor: hand;";
+    private static final String SAVE_BUSY_STYLE =
+            "-fx-background-color: #26313C; -fx-text-fill: #CBD5DF; -fx-background-radius: 10;";
 
     public Node build() {
         ScrollPane scroll = new ScrollPane();
@@ -166,12 +172,25 @@ public class SettingsView {
         hostField.setStyle(fieldStyle());
         hostField.textProperty().bindBidirectional(state.trackerHost);
 
-        TextField portField = new TextField(state.trackerPort.get());
+        TextField portField = new TextField();
         portField.setPromptText("Port");
         portField.setPrefWidth(90);
         portField.setPrefHeight(40);
         portField.setFont(Font.font("System", 14));
         portField.setStyle(fieldStyle());
+        // DT.5: reject any keystroke that would make the field hold a non-numeric or out-of-range
+        // port, so it can never contain "9000abc" (which would blow up Integer.parseInt on the Save
+        // worker) nor a value like "70000" that the field shows but the app silently clamps to the
+        // default. The filter vetoes the change before it lands, composing with the bidirectional
+        // binding below (the binding's programmatic "9000" set passes). AppState.parseTrackerPort
+        // remains the defensive backstop for a blank field or a stale/hand-edited preference.
+        UnaryOperator<TextFormatter.Change> validPort = c -> {
+            String t = c.getControlNewText();
+            if (t.isEmpty()) return c;                 // allow clearing the field
+            if (!t.matches("\\d{1,5}")) return null;   // digits only, at most 5
+            return Integer.parseInt(t) <= 65535 ? c : null; // never exceed the max TCP port
+        };
+        portField.setTextFormatter(new TextFormatter<>(validPort));
         portField.textProperty().bindBidirectional(state.trackerPort);
 
         fields.getChildren().addAll(hostField, portField);
@@ -261,31 +280,75 @@ public class SettingsView {
         saveBtn.setFont(Font.font("System", FontWeight.BOLD, 15));
         saveBtn.setPrefHeight(46);
         saveBtn.setPrefWidth(200);
-        saveBtn.setStyle(
-                "-fx-background-color: #0E8C77; -fx-text-fill: white; " +
-                "-fx-background-radius: 10; -fx-cursor: hand;");
+        saveBtn.setStyle(SAVE_IDLE_STYLE);
+
+        // DT.5: a colored status line that reports the REAL save outcome. The button used to morph
+        // into a green "Saved!" the instant it was clicked — before the background reconnect() had
+        // even run, so it claimed success even when the tracker was unreachable or the port unparsable.
+        Label status = new Label();
+        status.setFont(Font.font("System", FontWeight.BOLD, 13));
+        status.setWrapText(true);
+        status.setVisible(false);
+        status.setManaged(false);
+        HBox.setHgrow(status, Priority.ALWAYS);
+
         saveBtn.setOnAction(e -> {
             state.savePrefs();
-            new Thread(() -> {
-                state.reconnect();
-            }).start();
-            saveBtn.setText("Saved!");
-            saveBtn.setGraphic(Icons.icon(Icons.CHECK, 16, Color.WHITE, 2.4));
-            saveBtn.setGraphicTextGap(8);
-            saveBtn.setStyle("-fx-background-color: #46C46A; -fx-text-fill: white; -fx-background-radius: 10;");
-            new Thread(() -> {
-                try { Thread.sleep(2000); } catch (Exception ignored) {}
-                javafx.application.Platform.runLater(() -> {
-                    saveBtn.setText("Save Settings");
-                    saveBtn.setGraphic(null);
-                    saveBtn.setStyle("-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 10;");
-                });
-            }).start();
+            // Show progress while the (blocking, 5s-timeout) reconnect runs on a worker, then reflect
+            // the ACTUAL result. An unreachable tracker keeps the button in "Saving..." until it really
+            // fails, rather than instantly lying that it saved.
+            saveBtn.setDisable(true);
+            saveBtn.setText("Saving...");
+            saveBtn.setGraphic(null);
+            saveBtn.setStyle(SAVE_BUSY_STYLE);
+            status.setVisible(false);
+            status.setManaged(false);
+            Thread worker = new Thread(() -> {
+                AppState.ReconnectResult result = state.reconnect();
+                javafx.application.Platform.runLater(() -> showSaveResult(saveBtn, status, result));
+            }, "settings-save");
+            worker.setDaemon(true);
+            worker.start();
         });
 
-        HBox box = new HBox(saveBtn);
+        HBox box = new HBox(14, saveBtn, status);
         box.setAlignment(Pos.CENTER_LEFT);
         return box;
+    }
+
+    /** Restores the Save button and shows an honest, color-coded outcome of the last save (DT.5). */
+    private void showSaveResult(Button saveBtn, Label status, AppState.ReconnectResult result) {
+        saveBtn.setDisable(false);
+        saveBtn.setText("Save Settings");
+        saveBtn.setGraphic(null);
+        saveBtn.setStyle(SAVE_IDLE_STYLE);
+
+        String msg;
+        String iconPath;
+        Color color;
+        switch (result) {
+            case CONNECTED -> {
+                msg = "Connected to tracker.";
+                iconPath = Icons.CHECK;
+                color = Color.web("#46C46A");
+            }
+            case UNREACHABLE -> {
+                msg = "Settings saved, but the tracker couldn't be reached.";
+                iconPath = Icons.ALERT;
+                color = Color.web("#E0A458");
+            }
+            default -> { // AUTO_DISCOVER: settings persisted; auto-discovery owns the connection
+                msg = "Settings saved.";
+                iconPath = Icons.CHECK;
+                color = Color.web("#46C46A");
+            }
+        }
+        status.setText(msg);
+        status.setTextFill(color);
+        status.setGraphic(Icons.icon(iconPath, 14, color, 2.2));
+        status.setGraphicTextGap(7);
+        status.setVisible(true);
+        status.setManaged(true);
     }
 
     private String fieldStyle() {

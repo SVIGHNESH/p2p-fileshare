@@ -5,11 +5,17 @@ import com.p2p.core.protocol.Protocol;
 import com.p2p.core.protocol.Protocol.*;
 
 import java.io.*;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class TrackerClient {
+
+    /** Bound the connect phase too: an unreachable tracker host otherwise hangs on TCP SYN retries
+     *  for ~minutes (the OS default), freezing the caller. setSoTimeout only governs reads. */
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 5000;
 
     private String trackerHost;
     private int trackerPort;
@@ -69,12 +75,13 @@ public class TrackerClient {
         // TE.1: pin UTF-8 to match the tracker server's pinned streams. On JDK 18+ the default is
         // already UTF-8 (JEP 400), but being explicit on both ends prevents a mismatch on non-ASCII
         // filenames if the JVM default is forced back (e.g. -Dfile.encoding=COMPAT).
-        try (Socket socket = new Socket(trackerHost, trackerPort);
-             PrintWriter out = new PrintWriter(
-                     new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
-             BufferedReader in = new BufferedReader(
-                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
-            socket.setSoTimeout(5000);
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(trackerHost, trackerPort), CONNECT_TIMEOUT_MS);
+            socket.setSoTimeout(READ_TIMEOUT_MS);
+            PrintWriter out = new PrintWriter(
+                    new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
+            BufferedReader in = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             out.println(msg.toJson());
             String line = in.readLine();
             return line != null ? Message.fromJson(line) : null;
