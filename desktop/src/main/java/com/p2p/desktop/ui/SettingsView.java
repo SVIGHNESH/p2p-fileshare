@@ -34,32 +34,32 @@ public class SettingsView {
         // ── Network Section ──────────────────────────────────────────────────
         root.getChildren().addAll(
                 pageTitle,
-                buildSectionHeader("🌐  Network — Tracker Connection"),
+                buildSectionHeader(Icons.GLOBE, "Network - Tracker Connection"),
                 buildInfoBox(
                         "What is a Tracker?",
                         "The Tracker is a small program that keeps track of who has which files. " +
                         "One person in your group needs to run it (see the README). " +
-                        "If auto-discovery is enabled, you don't need to type anything — " +
+                        "If auto-discovery is enabled, you don't need to type anything - " +
                         "the tracker will be found automatically when you're on the same Wi-Fi."),
                 buildAutoDiscoveryCard(state),
                 buildTrackerManualCard(state),
 
-                buildSectionHeader("📂  Shared Folder"),
+                buildSectionHeader(Icons.FOLDER, "Shared Folder"),
                 buildInfoBox(
                         "Your shared folder",
                         "Files you place in this folder are visible to others on the network. " +
                         "Downloaded files are also saved here."),
                 buildFolderCard(state),
 
-                buildSectionHeader("👤  Your Profile"),
+                buildSectionHeader(Icons.USER, "Your Profile"),
                 buildProfileCard(state),
 
-                buildSectionHeader("🔒  Security"),
+                buildSectionHeader(Icons.LOCK, "Security"),
                 buildSecurityCard(),
 
                 buildSaveButton(state),
 
-                buildSectionHeader("ℹ️  About"),
+                buildSectionHeader(Icons.INFO, "About"),
                 buildAboutCard()
         );
 
@@ -80,13 +80,15 @@ public class SettingsView {
         return card;
     }
 
-    private Node buildSectionHeader(String text) {
+    private Node buildSectionHeader(String iconPath, String text) {
         Label label = new Label(text);
         label.setFont(Font.font("System", FontWeight.BOLD, 16));
         label.setTextFill(Color.web("#B3C0CC"));
+        HBox titleRow = new HBox(10, Icons.icon(iconPath, 17, Color.web("#B3C0CC"), 2.0), label);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
         Separator sep = new Separator();
         sep.setStyle("-fx-background-color: #26313C;");
-        VBox box = new VBox(8, label, sep);
+        VBox box = new VBox(8, titleRow, sep);
         return box;
     }
 
@@ -96,14 +98,16 @@ public class SettingsView {
         box.setStyle(
                 "-fx-background-color: #101A20; -fx-background-radius: 8; " +
                 "-fx-border-color: #24414F; -fx-border-radius: 8; -fx-border-width: 1;");
-        Label t = new Label("ℹ  " + title);
+        Label t = new Label(title);
         t.setFont(Font.font("System", FontWeight.BOLD, 13));
         t.setTextFill(Color.web("#58A8FF"));
+        HBox titleRow = new HBox(8, Icons.icon(Icons.INFO, 14, Color.web("#58A8FF"), 2.0), t);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
         Label b = new Label(body);
         b.setTextFill(Color.web("#93A1AE"));
         b.setFont(Font.font("System", 13));
         b.setWrapText(true);
-        box.getChildren().addAll(t, b);
+        box.getChildren().addAll(titleRow, b);
         return box;
     }
 
@@ -233,20 +237,22 @@ public class SettingsView {
         card.setPadding(new Insets(16, 20, 16, 20));
         card.setStyle("-fx-background-color: #0E1F16; -fx-background-radius: 10; -fx-border-color: #2C5A3F; -fx-border-radius: 10; -fx-border-width: 1;");
 
-        Label heading = new Label("🔒  Encryption: Always On");
+        Label heading = new Label("Encryption: Always On");
         heading.setFont(Font.font("System", FontWeight.BOLD, 14));
         heading.setTextFill(Color.web("#46C46A"));
+        HBox headingRow = new HBox(9, Icons.icon(Icons.LOCK, 15, Color.web("#46C46A"), 2.0), heading);
+        headingRow.setAlignment(Pos.CENTER_LEFT);
 
         Label body = new Label(
                 "All file transfers between peers are encrypted using TLS 1.3 " +
                 "with a self-signed certificate generated at startup. " +
                 "File integrity is verified with SHA-256 checksums on every chunk. " +
-                "You don't need to do anything — it's automatic.");
+                "You don't need to do anything - it's automatic.");
         body.setTextFill(Color.web("#7FB892"));
         body.setFont(Font.font("System", 13));
         body.setWrapText(true);
 
-        card.getChildren().addAll(heading, body);
+        card.getChildren().addAll(headingRow, body);
         return card;
     }
 
@@ -263,12 +269,15 @@ public class SettingsView {
             new Thread(() -> {
                 state.reconnect();
             }).start();
-            saveBtn.setText("✓ Saved!");
+            saveBtn.setText("Saved!");
+            saveBtn.setGraphic(Icons.icon(Icons.CHECK, 16, Color.WHITE, 2.4));
+            saveBtn.setGraphicTextGap(8);
             saveBtn.setStyle("-fx-background-color: #46C46A; -fx-text-fill: white; -fx-background-radius: 10;");
             new Thread(() -> {
                 try { Thread.sleep(2000); } catch (Exception ignored) {}
                 javafx.application.Platform.runLater(() -> {
                     saveBtn.setText("Save Settings");
+                    saveBtn.setGraphic(null);
                     saveBtn.setStyle("-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 10;");
                 });
             }).start();

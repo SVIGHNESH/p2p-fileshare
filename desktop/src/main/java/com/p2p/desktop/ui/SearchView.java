@@ -84,9 +84,11 @@ public class SearchView {
         resultsBox.setPadding(new Insets(24, 40, 24, 40));
         resultsBox.setStyle("-fx-background-color: #0E1419;");
 
-        Label placeholder = new Label("🔍  Search for a file above to see results here.");
-        placeholder.setTextFill(Color.web("#4A5662"));
-        placeholder.setFont(Font.font("System", 15));
+        Label placeholderText = new Label("Search for a file above to see results here.");
+        placeholderText.setTextFill(Color.web("#4A5662"));
+        placeholderText.setFont(Font.font("System", 15));
+        HBox placeholder = new HBox(10, Icons.icon(Icons.SEARCH, 16, Color.web("#4A5662")), placeholderText);
+        placeholder.setAlignment(Pos.CENTER_LEFT);
         resultsBox.getChildren().add(placeholder);
         scrollPane.setContent(resultsBox);
 
@@ -106,7 +108,7 @@ public class SearchView {
                 resultsBox.getChildren().clear();
                 resultsBox.getChildren().add(buildErrorCard(
                         "Not Connected to Network",
-                        "Go to ⚙ Settings and enter your tracker address, or wait for auto-discovery."));
+                        "Go to Settings and enter your tracker address, or wait for auto-discovery."));
                 return;
             }
 
@@ -143,7 +145,7 @@ public class SearchView {
                 resultsBox.getChildren().clear();
                 resultsBox.getChildren().add(buildErrorCard(
                         "Not Connected to Network",
-                        "Go to ⚙ Settings and enter your tracker address, or wait for auto-discovery."));
+                        "Go to Settings and enter your tracker address, or wait for auto-discovery."));
                 return;
             }
 
@@ -199,8 +201,7 @@ public class SearchView {
                 "-fx-background-color: #161F28; -fx-background-radius: 12; " +
                 "-fx-border-color: #26313C; -fx-border-radius: 12; -fx-border-width: 1;");
 
-        Label icon = new Label(fileIcon(file.name));
-        icon.setFont(Font.font("System", 32));
+        Node icon = Icons.fileIcon(file.name, 30, Color.web("#9AA8B5"));
 
         VBox meta = new VBox(4);
         HBox.setHgrow(meta, Priority.ALWAYS);
@@ -210,14 +211,18 @@ public class SearchView {
         nameLabel.setTextFill(Color.WHITE);
 
         String sizeStr = formatSize(file.size);
-        Label details = new Label(sizeStr + "  ·  " + peers.size() + " source(s)  ·  " + file.totalChunks + " chunks");
+        String chunkStr = file.totalChunks + (file.totalChunks == 1 ? " chunk" : " chunks");
+        String sourceStr = peers.size() + (peers.size() == 1 ? " source" : " sources");
+        Label details = new Label(sizeStr + "  ·  " + sourceStr + "  ·  " + chunkStr);
         details.setTextFill(Color.web("#93A1AE"));
         details.setFont(Font.font("System", 13));
 
         meta.getChildren().addAll(nameLabel, details);
 
-        Button downloadBtn = new Button("⬇  Download");
+        Button downloadBtn = new Button("Download");
         downloadBtn.setFont(Font.font("System", FontWeight.BOLD, 13));
+        downloadBtn.setGraphic(Icons.icon(Icons.DOWNLOAD, 15, Color.WHITE, 2.0));
+        downloadBtn.setGraphicTextGap(8);
         downloadBtn.setStyle(
                 "-fx-background-color: #0E8C77; -fx-text-fill: white; " +
                 "-fx-background-radius: 8; -fx-cursor: hand; -fx-padding: 10 20 10 20;");
@@ -241,7 +246,7 @@ public class SearchView {
                         t.state != DownloadManager.DownloadState.FAILED &&
                         t.state != DownloadManager.DownloadState.PAUSED);
         if (alreadyDownloading) {
-            btn.setText("⬇  Already queued");
+            btn.setText("Already queued");
             return;
         }
 
@@ -256,12 +261,13 @@ public class SearchView {
         // pinned for the process lifetime by the long-lived task in state.downloads.
         task.addListener(new DownloadManager.DownloadListener() {
             @Override public void onProgress(DownloadManager.DownloadTask t) {
-                Platform.runLater(() -> btn.setText("⬇  " + t.getProgressText()));
+                Platform.runLater(() -> btn.setText(t.getProgressText()));
             }
             @Override public void onComplete(DownloadManager.DownloadTask t) {
                 t.removeListener(this);
                 Platform.runLater(() -> {
-                    btn.setText("✓  Done!");
+                    btn.setText("Done!");
+                    btn.setGraphic(Icons.icon(Icons.CHECK, 15, Color.WHITE, 2.2));
                     btn.setStyle("-fx-background-color: #2C7A45; -fx-text-fill: white; -fx-background-radius: 8;");
                     state.refreshSharedFiles();
                 });
@@ -269,7 +275,8 @@ public class SearchView {
             @Override public void onError(DownloadManager.DownloadTask t) {
                 t.removeListener(this);
                 Platform.runLater(() -> {
-                    btn.setText("✗  Failed — click to retry");
+                    btn.setText("Retry");
+                    btn.setGraphic(Icons.icon(Icons.REFRESH, 15, Color.WHITE, 2.0));
                     btn.setStyle("-fx-background-color: #B23B36; -fx-text-fill: white; -fx-background-radius: 8;");
                 });
             }
@@ -277,15 +284,14 @@ public class SearchView {
 
         state.downloads.add(task);
         state.downloadManager.download(task);
-        btn.setText("⬇  Starting...");
+        btn.setText("Starting...");
     }
 
     private Node buildEmptyResult(String query) {
-        VBox box = new VBox(8);
+        VBox box = new VBox(12);
         box.setAlignment(Pos.CENTER);
         box.setPadding(new Insets(60, 0, 0, 0));
-        Label icon = new Label("🤷");
-        icon.setFont(Font.font("System", 40));
+        Node icon = Icons.icon(Icons.SEARCH, 44, Color.web("#36434F"), 1.6);
         Label msg = new Label("No one on the network is sharing \"" + query + "\" right now.");
         msg.setTextFill(Color.web("#5E6B77"));
         msg.setFont(Font.font("System", 15));
@@ -297,11 +303,10 @@ public class SearchView {
     }
 
     private Node buildEmptyBrowse() {
-        VBox box = new VBox(8);
+        VBox box = new VBox(12);
         box.setAlignment(Pos.CENTER);
         box.setPadding(new Insets(60, 0, 0, 0));
-        Label icon = new Label("📭");
-        icon.setFont(Font.font("System", 40));
+        Node icon = Icons.icon(Icons.INBOX, 44, Color.web("#36434F"), 1.6);
         Label msg = new Label("No files are being shared on the network right now.");
         msg.setTextFill(Color.web("#5E6B77"));
         msg.setFont(Font.font("System", 15));
@@ -316,26 +321,17 @@ public class SearchView {
         VBox box = new VBox(8);
         box.setPadding(new Insets(24));
         box.setStyle("-fx-background-color: #1F1212; -fx-background-radius: 12; -fx-border-color: #E5564E; -fx-border-radius: 12; -fx-border-width: 1;");
-        Label t = new Label("⚠  " + title);
+        Label t = new Label(title);
         t.setFont(Font.font("System", FontWeight.BOLD, 15));
         t.setTextFill(Color.web("#E5564E"));
+        HBox titleRow = new HBox(9, Icons.icon(Icons.ALERT, 17, Color.web("#E5564E"), 2.0), t);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
         Label b = new Label(body);
         b.setTextFill(Color.web("#D69B97"));
         b.setFont(Font.font("System", 13));
         b.setWrapText(true);
-        box.getChildren().addAll(t, b);
+        box.getChildren().addAll(titleRow, b);
         return box;
-    }
-
-    private String fileIcon(String name) {
-        String lower = name.toLowerCase();
-        if (lower.endsWith(".pdf")) return "📄";
-        if (lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".avi")) return "🎬";
-        if (lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".flac")) return "🎵";
-        if (lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg")) return "🖼";
-        if (lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".gz")) return "🗜";
-        if (lower.endsWith(".java") || lower.endsWith(".py") || lower.endsWith(".js")) return "💻";
-        return "📁";
     }
 
     private String formatSize(long bytes) {

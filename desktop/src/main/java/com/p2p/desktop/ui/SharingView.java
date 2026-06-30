@@ -40,15 +40,19 @@ public class SharingView {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Button addBtn = new Button("+ Add File");
+        Button addBtn = new Button("Add File");
         addBtn.setFont(Font.font("System", FontWeight.BOLD, 14));
+        addBtn.setGraphic(Icons.icon(Icons.PLUS, 15, Color.WHITE, 2.2));
+        addBtn.setGraphicTextGap(8);
         addBtn.setStyle(
                 "-fx-background-color: #0E8C77; -fx-text-fill: white; " +
                 "-fx-background-radius: 8; -fx-cursor: hand; -fx-padding: 10 20 10 20;");
         addBtn.setOnAction(e -> addFile());
 
-        Button refreshBtn = new Button("↻ Refresh");
+        Button refreshBtn = new Button("Refresh");
         refreshBtn.setFont(Font.font("System", 13));
+        refreshBtn.setGraphic(Icons.icon(Icons.REFRESH, 14, Color.web("#B3C0CC"), 2.0));
+        refreshBtn.setGraphicTextGap(7);
         refreshBtn.setStyle(
                 "-fx-background-color: #1D2730; -fx-text-fill: #B3C0CC; " +
                 "-fx-border-color: #36434F; -fx-border-radius: 8; " +
@@ -62,8 +66,7 @@ public class SharingView {
         folderBanner.setAlignment(Pos.CENTER_LEFT);
         folderBanner.setPadding(new Insets(12, 32, 12, 32));
         folderBanner.setStyle("-fx-background-color: #101A20;");
-        Label folderIcon = new Label("📂");
-        folderIcon.setFont(Font.font("System", 16));
+        Node folderIcon = Icons.icon(Icons.FOLDER, 16, Color.web("#0E8C77"));
         Label folderLabel = new Label("Shared folder: " + AppState.get().sharedFolderPath.get());
         folderLabel.setTextFill(Color.web("#0E8C77"));
         folderLabel.setFont(Font.font("System", 13));
@@ -119,15 +122,15 @@ public class SharingView {
                 "-fx-background-color: #161F28; -fx-background-radius: 10; " +
                 "-fx-border-color: #26313C; -fx-border-radius: 10; -fx-border-width: 1;");
 
-        Label icon = new Label(fileIcon(fi.name));
-        icon.setFont(Font.font("System", 28));
+        Node icon = Icons.fileIcon(fi.name, 26, Color.web("#9AA8B5"));
 
         VBox meta = new VBox(3);
         HBox.setHgrow(meta, Priority.ALWAYS);
         Label nameLabel = new Label(fi.name);
         nameLabel.setFont(Font.font("System", FontWeight.BOLD, 15));
         nameLabel.setTextFill(Color.WHITE);
-        Label details = new Label(formatSize(fi.size) + "  ·  " + fi.totalChunks + " chunks  ·  Shared ✓");
+        String chunkStr = fi.totalChunks + (fi.totalChunks == 1 ? " chunk" : " chunks");
+        Label details = new Label(formatSize(fi.size) + "  ·  " + chunkStr + "  ·  Shared");
         details.setTextFill(Color.web("#46C46A"));
         details.setFont(Font.font("System", 12));
         meta.getChildren().addAll(nameLabel, details);
@@ -170,16 +173,6 @@ public class SharingView {
             Alert err = new Alert(Alert.AlertType.ERROR, "Could not copy file: " + e.getMessage());
             err.showAndWait();
         }
-    }
-
-    private String fileIcon(String name) {
-        String lower = name.toLowerCase();
-        if (lower.endsWith(".pdf")) return "📄";
-        if (lower.endsWith(".mp4") || lower.endsWith(".mkv")) return "🎬";
-        if (lower.endsWith(".mp3") || lower.endsWith(".wav")) return "🎵";
-        if (lower.endsWith(".jpg") || lower.endsWith(".png")) return "🖼";
-        if (lower.endsWith(".zip") || lower.endsWith(".tar")) return "🗜";
-        return "📁";
     }
 
     private String formatSize(long bytes) {

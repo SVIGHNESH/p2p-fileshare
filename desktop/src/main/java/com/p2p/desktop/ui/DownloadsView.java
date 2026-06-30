@@ -25,7 +25,7 @@ public class DownloadsView {
         Label title = new Label("Downloads");
         title.setFont(Font.font("System", FontWeight.BOLD, 22));
         title.setTextFill(Color.WHITE);
-        Label subtitle = new Label("   —  Files you've downloaded or are currently downloading");
+        Label subtitle = new Label("   ·  Files you've downloaded or are currently downloading");
         subtitle.setFont(Font.font("System", 14));
         subtitle.setTextFill(Color.web("#5E6B77"));
         subtitle.setAlignment(Pos.BOTTOM_LEFT);
@@ -44,7 +44,7 @@ public class DownloadsView {
         AppState state = AppState.get();
 
         // Empty state
-        Label empty = new Label("No downloads yet.\nGo to 🔍 Search to find and download files from the network.");
+        Label empty = new Label("No downloads yet.\nGo to Search to find and download files from the network.");
         empty.setTextFill(Color.web("#4A5662"));
         empty.setFont(Font.font("System", 15));
         empty.setTextAlignment(TextAlignment.CENTER);
@@ -82,8 +82,7 @@ public class DownloadsView {
         // File name row
         HBox nameRow = new HBox(10);
         nameRow.setAlignment(Pos.CENTER_LEFT);
-        Label icon = new Label(fileIcon(task.filename));
-        icon.setFont(Font.font("System", 26));
+        Node icon = Icons.fileIcon(task.filename, 24, Color.web("#9AA8B5"));
         Label name = new Label(task.filename);
         name.setFont(Font.font("System", FontWeight.BOLD, 16));
         name.setTextFill(Color.WHITE);
@@ -145,9 +144,9 @@ public class DownloadsView {
                 Platform.runLater(() -> {
                     bar.setProgress(1.0);
                     bar.setStyle("-fx-accent: #46C46A;");
-                    statusLabel.setText("✓ Complete");
+                    statusLabel.setText("Complete");
                     statusLabel.setTextFill(Color.web("#46C46A"));
-                    progressText.setText("Download complete — click to open");
+                    progressText.setText("Download complete - click to open");
                     cancelBtn.setVisible(false);
                     card.setCursor(javafx.scene.Cursor.HAND);
                     card.setStyle(
@@ -158,7 +157,7 @@ public class DownloadsView {
             @Override public void onError(DownloadTask t) {
                 Platform.runLater(() -> {
                     bar.setStyle("-fx-accent: #E5564E;");
-                    statusLabel.setText("✗ Failed");
+                    statusLabel.setText("Failed");
                     statusLabel.setTextFill(Color.web("#E5564E"));
                     progressText.setText(t.errorMessage != null ? t.errorMessage : "Unknown error");
                     cancelBtn.setVisible(false);
@@ -199,8 +198,8 @@ public class DownloadsView {
             case CONNECTING -> "Connecting...";
             case DOWNLOADING -> "Downloading";
             case VERIFYING -> "Verifying...";
-            case COMPLETE -> "✓ Complete";
-            case FAILED -> "✗ Failed";
+            case COMPLETE -> "Complete";
+            case FAILED -> "Failed";
             case PAUSED -> "Paused";
         };
     }
@@ -216,13 +215,4 @@ public class DownloadsView {
         };
     }
 
-    private String fileIcon(String name) {
-        String lower = name.toLowerCase();
-        if (lower.endsWith(".pdf")) return "📄";
-        if (lower.endsWith(".mp4") || lower.endsWith(".mkv")) return "🎬";
-        if (lower.endsWith(".mp3") || lower.endsWith(".wav")) return "🎵";
-        if (lower.endsWith(".jpg") || lower.endsWith(".png")) return "🖼";
-        if (lower.endsWith(".zip") || lower.endsWith(".tar")) return "🗜";
-        return "📁";
-    }
 }
