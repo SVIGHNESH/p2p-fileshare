@@ -59,6 +59,13 @@ public class AppState {
     private volatile boolean connected = false;
 
     /**
+     * DT.6: set once {@link #shutdown()} has run so the auto-discovery retry loop stops
+     * rescheduling itself and a second cleanup pass (App.stop() and the shutdown hook can
+     * both fire) becomes a no-op.
+     */
+    private volatile boolean shuttingDown = false;
+
+    /**
      * Network-facing LAN IP. {@code volatile} because it is set on the background
      * init thread and later read by the keep-alive / discovery / reconnect threads.
      */
@@ -217,19 +224,45 @@ public class AppState {
                 }
             }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
 
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                if (trackerClient != null) trackerClient.unregister(myIp, port);
-                if (peerServer != null) peerServer.stop();
-                if (downloadManager != null) downloadManager.shutdown();
-                keepAlive.shutdownNow();
-                sharedFilesExecutor.shutdownNow();
-                savePrefs();
-            }));
+            // DT.6: a Runtime shutdown hook covers abnormal termination (SIGTERM / Ctrl-C). The
+            // normal window-close path runs App.stop() -> shutdown() instead; shutdown() is idempotent
+            // so the two never double-clean.
+            Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "appstate-shutdown-hook"));
         } catch (Exception e) {
             // DT.7 (surfacing this in the UI) is out of scope; at minimum don't let
             // a bind/TLS failure die silently on the background thread.
             System.err.println("[AppState] init failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * DT.6: orderly shutdown. Before this the only cleanup was a Runtime shutdown hook, and it relied
+     * on JavaFX's implicit-exit calling {@code System.exit()} to fire that hook — an implementation
+     * detail, not the documented lifecycle. That hook also never stopped the {@link UDPDiscovery}
+     * instance, so the non-daemon {@code udp-discovery} listener (relaunched every 15s while
+     * disconnected) and the {@link PeerServer} accept loop survived only because {@code System.exit}
+     * force-terminated them. If implicit-exit ever stopped calling {@code System.exit} (e.g. the app
+     * embedded so it is not the last window), those non-daemon threads would keep the JVM alive — a
+     * latent hang. {@code App.stop()} is the documented place to clean up; it runs on the FX thread and
+     * here explicitly stops every long-lived component (discovery included) so teardown no longer
+     * depends on {@code System.exit}.
+     *
+     * <p>Idempotent (guarded by {@link #shuttingDown}) because both {@code App.stop()} and the shutdown
+     * hook can fire — the hook still runs for SIGTERM/Ctrl-C, where there is no App.stop().
+     */
+    public void shutdown() {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        System.out.println("[AppState] Shutting down — stopping discovery, peer server and downloads.");
+        // Stop discovery first so its retry loop cannot relaunch a listener mid-teardown.
+        try { if (discovery != null) discovery.stop(); } catch (Exception ignored) {}
+        int port = peerServer != null ? peerServer.getPort() : Protocol.DEFAULT_PEER_PORT;
+        try { if (connected && trackerClient != null) trackerClient.unregister(myIp, port); } catch (Exception ignored) {}
+        try { if (peerServer != null) peerServer.stop(); } catch (Exception ignored) {}        // releases the accept thread
+        try { if (downloadManager != null) downloadManager.shutdown(); } catch (Exception ignored) {}
+        keepAlive.shutdownNow();
+        sharedFilesExecutor.shutdownNow();
+        savePrefs();
     }
 
     /** Marshal a state write back onto the JavaFX application thread. */
@@ -274,9 +307,10 @@ public class AppState {
                     isConnected.set(ok);
                     savePrefs();
                 });
-            } else if (!connected) {
+            } else if (!connected && !shuttingDown) {
                 // Timed out, still not connected — keep retrying. A stale tracker
                 // host saved from a previous network must not stop discovery.
+                // (DT.6: but stop retrying once shutdown has begun so the JVM can exit.)
                 scheduleDiscovery(disc, peerPort);
             }
         });

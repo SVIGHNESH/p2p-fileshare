@@ -60,6 +60,19 @@ public class App extends Application {
         AppState.get().init();
     }
 
+    /**
+     * DT.6: JavaFX calls this on the FX thread when the last window closes — the documented place for
+     * cleanup. Previously there was no stop() override, so teardown relied on JavaFX's implicit-exit
+     * calling {@code System.exit()} to fire a Runtime shutdown hook (which itself never stopped the
+     * auto-discovery listener). {@link AppState#shutdown()} now stops the peer server, downloads and
+     * discovery explicitly, so the process no longer depends on that {@code System.exit} to exit
+     * cleanly. The Runtime hook is kept for SIGTERM/Ctrl-C and is a no-op second pass (idempotent).
+     */
+    @Override
+    public void stop() {
+        AppState.get().shutdown();
+    }
+
     private HBox buildHeader() {
         HBox header = new HBox(12);
         header.setAlignment(Pos.CENTER_LEFT);
