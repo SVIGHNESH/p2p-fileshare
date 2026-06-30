@@ -74,6 +74,38 @@ public class SharingView {
                 folderLabel.setText("Shared folder: " + nv));
         folderBanner.getChildren().addAll(folderIcon, folderLabel);
 
+        // ── Unshareable-files Warning (DT.7) ──────────────────────────────────
+        // A file that can't be hashed (e.g. unreadable) is dropped from the advertised list rather
+        // than shared with an empty checksum (T0.4). Without this banner that drop was silent — the
+        // user would think a file was shared when it wasn't. Hidden unless something was skipped.
+        HBox warnBanner = new HBox(10);
+        warnBanner.setAlignment(Pos.CENTER_LEFT);
+        warnBanner.setPadding(new Insets(12, 32, 12, 32));
+        warnBanner.setStyle("-fx-background-color: #241B10;");
+        Node warnIcon = Icons.icon(Icons.ALERT, 16, Color.web("#E0A458"), 2.0);
+        Label warnLabel = new Label();
+        warnLabel.setTextFill(Color.web("#E0A458"));
+        warnLabel.setFont(Font.font("System", 13));
+        warnLabel.setWrapText(true);
+        HBox.setHgrow(warnLabel, Priority.ALWAYS);
+        warnBanner.getChildren().addAll(warnIcon, warnLabel);
+
+        Runnable applyWarn = () -> {
+            var skipped = AppState.get().unshareableFiles;
+            boolean any = !skipped.isEmpty();
+            warnBanner.setVisible(any);
+            warnBanner.setManaged(any);
+            if (any) {
+                String list = String.join(", ", skipped);
+                warnLabel.setText(skipped.size() == 1
+                        ? "1 file in your shared folder couldn't be read, so it isn't being shared: " + list
+                        : skipped.size() + " files in your shared folder couldn't be read, so they aren't being shared: " + list);
+            }
+        };
+        applyWarn.run();
+        AppState.get().unshareableFiles.addListener((javafx.collections.ListChangeListener<String>) c ->
+                javafx.application.Platform.runLater(applyWarn));
+
         // ── File Grid ────────────────────────────────────────────────────────
         ScrollPane scroll = new ScrollPane();
         scroll.setFitToWidth(true);
@@ -93,7 +125,7 @@ public class SharingView {
         });
 
         scroll.setContent(listBox);
-        root.getChildren().addAll(header, folderBanner, scroll);
+        root.getChildren().addAll(header, folderBanner, warnBanner, scroll);
         return root;
     }
 

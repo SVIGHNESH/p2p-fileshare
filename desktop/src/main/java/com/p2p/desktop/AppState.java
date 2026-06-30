@@ -49,6 +49,27 @@ public class AppState {
     public final ObservableList<FileInfo> sharedFiles = FXCollections.observableArrayList();
 
     /**
+     * DT.7: real TLS health surfaced to the UI. Optimistically {@code true} (TLS init is the very
+     * first thing {@link #initBlocking} does, so the window is true within milliseconds), and flipped
+     * to {@code false} if {@code TLSHelper.init()} throws. Previously that failure was swallowed to
+     * {@code System.err} while the Settings card kept claiming "Encryption: Always On" — a security
+     * lie. When this is {@code false} the peer server never binds (it needs the TLS context), so no
+     * peer transfers happen at all. Written ONLY on the FX thread (via {@link #runFx}).
+     */
+    public final BooleanProperty securityOk = new SimpleBooleanProperty(true);
+
+    /** DT.7: the TLS init error message, shown alongside the "Encryption unavailable" state. */
+    public final StringProperty securityDetail = new SimpleStringProperty("");
+
+    /**
+     * DT.7: names of shared-folder files that could NOT be hashed (e.g. unreadable) and so were
+     * silently dropped from the advertised list by {@link #buildFileList}. Surfaced as a warning
+     * banner in the Sharing view so the user knows a file they expected to share isn't being shared.
+     * FX-bound — written ONLY on the FX thread.
+     */
+    public final ObservableList<String> unshareableFiles = FXCollections.observableArrayList();
+
+    /**
      * UI-facing connection flag, written ONLY on the FX thread (via {@link #runFx}).
      * Background code must never branch on this — it reads the authoritative
      * {@link #connected} flag instead, since a marshalled set may not have run yet.
@@ -127,6 +148,16 @@ public class AppState {
     }
 
     public List<FileInfo> buildFileList() {
+        return buildFileList(null);
+    }
+
+    /**
+     * Build the advertised file list. Files that cannot be hashed are skipped (T0.4: never advertise
+     * an empty checksum — a downloader would "verify" any bytes against it and accept corruption) and,
+     * if {@code skippedOut} is non-null, their names are collected there so the caller can surface
+     * them in the UI (DT.7) instead of dropping them silently.
+     */
+    public List<FileInfo> buildFileList(List<String> skippedOut) {
         List<FileInfo> files = new ArrayList<>();
         File folder = getSharedFolder();
         File[] listed = folder.listFiles();
@@ -135,12 +166,11 @@ public class AppState {
             if (f.isFile() && !f.getName().endsWith(".meta")) {
                 int chunks = FileChunker.getTotalChunks(f.length());
                 String checksum;
-                // T0.4: never advertise an empty checksum — a downloader would "verify"
-                // any bytes against it and accept corruption. Skip files we cannot hash.
                 try { checksum = FileChunker.sha256OfFile(f); }
                 catch (Exception e) {
                     System.err.println("[AppState] Skipping unhashable shared file: "
                             + f.getName() + " (" + e.getMessage() + ")");
+                    if (skippedOut != null) skippedOut.add(f.getName());
                     continue;
                 }
                 files.add(new FileInfo(f.getName(), f.length(), chunks, checksum));
@@ -164,15 +194,25 @@ public class AppState {
 
     private void initBlocking() {
         try {
-            try { com.p2p.core.crypto.TLSHelper.init(); }
-            catch (Exception e) { System.err.println("[AppState] TLS init failed: " + e.getMessage()); }
+            // DT.7: surface a TLS failure instead of swallowing it. If keygen/keystore load throws,
+            // the peer server below never binds (it needs this context), so no encrypted transfers can
+            // happen — the UI must stop claiming "Encryption: Always On".
+            try {
+                com.p2p.core.crypto.TLSHelper.init();
+                runFx(() -> { securityOk.set(true); securityDetail.set(""); });
+            } catch (Exception e) {
+                final String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+                System.err.println("[AppState] TLS init failed: " + msg);
+                runFx(() -> { securityOk.set(false); securityDetail.set(msg); });
+            }
 
             myIp = detectLanIp();
             final String ip = myIp;
             runFx(() -> myIpDisplay.set(ip));
 
-            final List<FileInfo> files = buildFileList();
-            runFx(() -> sharedFiles.setAll(files));
+            final List<String> skipped = new ArrayList<>();
+            final List<FileInfo> files = buildFileList(skipped);
+            runFx(() -> { sharedFiles.setAll(files); unshareableFiles.setAll(skipped); });
 
             int port = Protocol.DEFAULT_PEER_PORT;
             peerServer = new PeerServer(port, this::getSharedFolder);
@@ -229,8 +269,9 @@ public class AppState {
             // so the two never double-clean.
             Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "appstate-shutdown-hook"));
         } catch (Exception e) {
-            // DT.7 (surfacing this in the UI) is out of scope; at minimum don't let
-            // a bind/TLS failure die silently on the background thread.
+            // Don't let a bind/registration failure die silently on the background thread. (The TLS
+            // failure path that DT.7 surfaces is handled at its own try/catch above; this is the
+            // catch-all for the rest of startup.)
             System.err.println("[AppState] init failed: " + e.getMessage());
         }
     }
@@ -345,9 +386,11 @@ public class AppState {
     public void refreshSharedFiles() {
         sharedFilesExecutor.submit(() -> {
             // Disk scan + SHA-256 of every file happen here, off the FX thread.
-            final List<FileInfo> files = buildFileList();
-            // Mutate the FX-bound ObservableList only on the FX thread.
-            runFx(() -> sharedFiles.setAll(files));
+            final List<String> skipped = new ArrayList<>();
+            final List<FileInfo> files = buildFileList(skipped);
+            // Mutate the FX-bound collections only on the FX thread. unshareableFiles (DT.7) feeds the
+            // Sharing-view warning banner so a file that can't be hashed isn't dropped silently.
+            runFx(() -> { sharedFiles.setAll(files); unshareableFiles.setAll(skipped); });
             // Background control flow branches on the authoritative `connected` flag, not the
             // FX-bound isConnected property (whose marshalled set may not have run yet). Register
             // with the freshly built local snapshot — never the live ObservableList the FX thread

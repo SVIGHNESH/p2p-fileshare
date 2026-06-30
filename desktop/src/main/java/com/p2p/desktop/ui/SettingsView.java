@@ -251,25 +251,65 @@ public class SettingsView {
         return card;
     }
 
+    // DT.7: this card used to be a hardcoded green "Encryption: Always On" reassurance even when TLS
+    // init had actually failed (the failure was swallowed to System.err). It now tracks the real
+    // AppState.securityOk and repaints in full — background, border, heading, icon, and body — so it
+    // can never show a red heading on a green card still promising encrypted transfers.
+    private static final String SECURITY_OK_CARD =
+            "-fx-background-color: #0E1F16; -fx-background-radius: 10; -fx-border-color: #2C5A3F; -fx-border-radius: 10; -fx-border-width: 1;";
+    private static final String SECURITY_BAD_CARD =
+            "-fx-background-color: #1E1012; -fx-background-radius: 10; -fx-border-color: #5A2C2C; -fx-border-radius: 10; -fx-border-width: 1;";
+    private static final Color SECURITY_OK_HEAD = Color.web("#46C46A");
+    private static final Color SECURITY_OK_BODY = Color.web("#7FB892");
+    private static final Color SECURITY_BAD_HEAD = Color.web("#E5564E");
+    private static final Color SECURITY_BAD_BODY = Color.web("#D29A9A");
+
     private Node buildSecurityCard() {
         VBox card = new VBox(10);
         card.setPadding(new Insets(16, 20, 16, 20));
-        card.setStyle("-fx-background-color: #0E1F16; -fx-background-radius: 10; -fx-border-color: #2C5A3F; -fx-border-radius: 10; -fx-border-width: 1;");
 
-        Label heading = new Label("Encryption: Always On");
+        Label heading = new Label();
         heading.setFont(Font.font("System", FontWeight.BOLD, 14));
-        heading.setTextFill(Color.web("#46C46A"));
-        HBox headingRow = new HBox(9, Icons.icon(Icons.LOCK, 15, Color.web("#46C46A"), 2.0), heading);
+
+        HBox headingRow = new HBox(9);
         headingRow.setAlignment(Pos.CENTER_LEFT);
 
-        Label body = new Label(
-                "All file transfers between peers are encrypted using TLS 1.3 " +
-                "with a self-signed certificate generated at startup. " +
-                "File integrity is verified with SHA-256 checksums on every chunk. " +
-                "You don't need to do anything - it's automatic.");
-        body.setTextFill(Color.web("#7FB892"));
+        Label body = new Label();
         body.setFont(Font.font("System", 13));
         body.setWrapText(true);
+
+        AppState state = AppState.get();
+        Runnable apply = () -> {
+            boolean ok = state.securityOk.get();
+            card.setStyle(ok ? SECURITY_OK_CARD : SECURITY_BAD_CARD);
+            heading.setText(ok ? "Encryption: Always On" : "Encryption unavailable");
+            heading.setTextFill(ok ? SECURITY_OK_HEAD : SECURITY_BAD_HEAD);
+            headingRow.getChildren().setAll(
+                    Icons.icon(ok ? Icons.LOCK : Icons.ALERT, 15,
+                            ok ? SECURITY_OK_HEAD : SECURITY_BAD_HEAD, ok ? 2.0 : 2.2),
+                    heading);
+            if (ok) {
+                body.setText(
+                        "All file transfers between peers are encrypted using TLS 1.3 " +
+                        "with a self-signed certificate generated at startup. " +
+                        "File integrity is verified with SHA-256 checksums on every chunk. " +
+                        "You don't need to do anything - it's automatic.");
+            } else {
+                String detail = state.securityDetail.get();
+                body.setText(
+                        "Secure transfers could not be started" +
+                        (detail == null || detail.isBlank() ? "." : ": " + detail + ".") +
+                        " Peers cannot send or receive files until this is fixed. " +
+                        "Try restarting the app; if it persists, make sure the app can write to its " +
+                        "keystore folder (~/.p2pshare).");
+            }
+            body.setTextFill(ok ? SECURITY_OK_BODY : SECURITY_BAD_BODY);
+        };
+        apply.run();
+        // securityOk is only ever set on the FX thread, but the listener is wrapped in runLater to
+        // match the rest of the chrome's defensive marshalling.
+        state.securityOk.addListener((o, ov, nv) ->
+                javafx.application.Platform.runLater(apply));
 
         card.getChildren().addAll(headingRow, body);
         return card;

@@ -145,12 +145,25 @@ public class App extends Application {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Node lock = Icons.icon(Icons.LOCK, 13, OK_GREEN, 2.0);
-        Label encLabel = new Label("Encrypted");
-        encLabel.setTextFill(OK_GREEN);
+        // DT.7: the lock used to be an unconditional green "Encrypted". It now tracks the real TLS
+        // health (AppState.securityOk): if TLS init failed, the peer server never bound, so no
+        // transfers happen at all — the bar says "Encryption unavailable" in red rather than lying.
+        Label encLabel = new Label();
         encLabel.setFont(Font.font("System", 11));
-        HBox enc = new HBox(6, lock, encLabel);
+        HBox enc = new HBox(6);
         enc.setAlignment(Pos.CENTER);
+
+        Runnable applyEnc = () -> {
+            boolean ok = AppState.get().securityOk.get();
+            enc.getChildren().setAll(
+                    Icons.icon(ok ? Icons.LOCK : Icons.ALERT, 13, ok ? OK_GREEN : ERR_RED, 2.0),
+                    encLabel);
+            encLabel.setText(ok ? "Encrypted" : "Encryption unavailable");
+            encLabel.setTextFill(ok ? OK_GREEN : ERR_RED);
+        };
+        applyEnc.run();
+        AppState.get().securityOk.addListener((o, ov, nv) ->
+                javafx.application.Platform.runLater(applyEnc));
 
         bar.getChildren().addAll(myIpLabel, sharedLabel, spacer, enc);
         return bar;
