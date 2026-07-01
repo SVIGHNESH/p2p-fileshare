@@ -141,7 +141,7 @@ public class SharedFragment extends Fragment {
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
 
         TextView details = new TextView(requireContext());
-        details.setText(formatSize(fi.size) + "  ·  Shared ✓");
+        details.setText(formatSize(fi.size) + "  ·  Shared");
         details.setTextColor(0xFF46C46A);
         details.setTextSize(12);
 

@@ -19,17 +19,20 @@ public class DownloadsView {
         root.setStyle("-fx-background-color: #0E1419;");
 
         // ── Header ───────────────────────────────────────────────────────────
-        HBox header = new HBox();
+        // Same stacked title-over-subtitle pattern as My Files / Settings, so the
+        // four views share one page-header hierarchy instead of Downloads getting a
+        // weaker inline "Title · subtitle" treatment.
+        HBox header = new HBox(16);
         header.setPadding(new Insets(24, 32, 16, 32));
+        header.setAlignment(Pos.CENTER_LEFT);
         header.setStyle("-fx-background-color: #121A21;");
+        VBox titleBox = new VBox(4);
         Label title = new Label("Downloads");
-        title.setFont(Font.font("System", FontWeight.BOLD, 22));
-        title.setTextFill(Color.WHITE);
-        Label subtitle = new Label("   —  Files you've downloaded or are currently downloading");
-        subtitle.setFont(Font.font("System", 14));
-        subtitle.setTextFill(Color.web("#5E6B77"));
-        subtitle.setAlignment(Pos.BOTTOM_LEFT);
-        header.getChildren().addAll(title, subtitle);
+        title.getStyleClass().add("page-title");
+        Label subtitle = new Label("Files you've downloaded or are currently downloading.");
+        subtitle.getStyleClass().add("page-subtitle");
+        titleBox.getChildren().addAll(title, subtitle);
+        header.getChildren().add(titleBox);
 
         // ── List ─────────────────────────────────────────────────────────────
         ScrollPane scroll = new ScrollPane();
@@ -43,13 +46,12 @@ public class DownloadsView {
 
         AppState state = AppState.get();
 
-        // Empty state
-        Label empty = new Label("No downloads yet.\nGo to 🔍 Search to find and download files from the network.");
-        empty.setTextFill(Color.web("#4A5662"));
-        empty.setFont(Font.font("System", 15));
-        empty.setTextAlignment(TextAlignment.CENTER);
-        empty.setWrapText(true);
-        empty.setVisible(state.downloads.isEmpty());
+        // Empty state — the same centered icon + message + hint treatment the
+        // Search view uses for its empty results, so all four views are consistent.
+        Node empty = buildEmptyState();
+        boolean isEmpty = state.downloads.isEmpty();
+        empty.setVisible(isEmpty);
+        empty.setManaged(isEmpty);
         list.getChildren().add(empty);
 
         // Bind to observable list
@@ -60,6 +62,7 @@ public class DownloadsView {
                         Node card = buildDownloadCard(task);
                         Platform.runLater(() -> {
                             empty.setVisible(false);
+                            empty.setManaged(false);
                             list.getChildren().add(card);
                         });
                     }
@@ -72,6 +75,21 @@ public class DownloadsView {
         return root;
     }
 
+    private Node buildEmptyState() {
+        VBox box = new VBox(12);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(60, 0, 0, 0));
+        Node icon = Icons.icon(Icons.INBOX, 44, Color.web("#36434F"), 1.6);
+        Label msg = new Label("No downloads yet.");
+        msg.setTextFill(Color.web("#5E6B77"));
+        msg.setFont(Font.font("System", 15));
+        Label hint = new Label("Go to Search to find and download files from the network.");
+        hint.setTextFill(Color.web("#36434F"));
+        hint.setFont(Font.font("System", 13));
+        box.getChildren().addAll(icon, msg, hint);
+        return box;
+    }
+
     private Node buildDownloadCard(DownloadTask task) {
         VBox card = new VBox(12);
         card.setPadding(new Insets(20, 24, 20, 24));
@@ -82,8 +100,7 @@ public class DownloadsView {
         // File name row
         HBox nameRow = new HBox(10);
         nameRow.setAlignment(Pos.CENTER_LEFT);
-        Label icon = new Label(fileIcon(task.filename));
-        icon.setFont(Font.font("System", 26));
+        Node icon = Icons.fileIcon(task.filename, 24, Color.web("#9AA8B5"));
         Label name = new Label(task.filename);
         name.setFont(Font.font("System", FontWeight.BOLD, 16));
         name.setTextFill(Color.WHITE);
@@ -145,9 +162,9 @@ public class DownloadsView {
                 Platform.runLater(() -> {
                     bar.setProgress(1.0);
                     bar.setStyle("-fx-accent: #46C46A;");
-                    statusLabel.setText("✓ Complete");
+                    statusLabel.setText("Complete");
                     statusLabel.setTextFill(Color.web("#46C46A"));
-                    progressText.setText("Download complete — click to open");
+                    progressText.setText("Download complete - click to open");
                     cancelBtn.setVisible(false);
                     card.setCursor(javafx.scene.Cursor.HAND);
                     card.setStyle(
@@ -158,7 +175,7 @@ public class DownloadsView {
             @Override public void onError(DownloadTask t) {
                 Platform.runLater(() -> {
                     bar.setStyle("-fx-accent: #E5564E;");
-                    statusLabel.setText("✗ Failed");
+                    statusLabel.setText("Failed");
                     statusLabel.setTextFill(Color.web("#E5564E"));
                     progressText.setText(t.errorMessage != null ? t.errorMessage : "Unknown error");
                     cancelBtn.setVisible(false);
@@ -199,8 +216,8 @@ public class DownloadsView {
             case CONNECTING -> "Connecting...";
             case DOWNLOADING -> "Downloading";
             case VERIFYING -> "Verifying...";
-            case COMPLETE -> "✓ Complete";
-            case FAILED -> "✗ Failed";
+            case COMPLETE -> "Complete";
+            case FAILED -> "Failed";
             case PAUSED -> "Paused";
         };
     }
@@ -216,13 +233,4 @@ public class DownloadsView {
         };
     }
 
-    private String fileIcon(String name) {
-        String lower = name.toLowerCase();
-        if (lower.endsWith(".pdf")) return "📄";
-        if (lower.endsWith(".mp4") || lower.endsWith(".mkv")) return "🎬";
-        if (lower.endsWith(".mp3") || lower.endsWith(".wav")) return "🎵";
-        if (lower.endsWith(".jpg") || lower.endsWith(".png")) return "🖼";
-        if (lower.endsWith(".zip") || lower.endsWith(".tar")) return "🗜";
-        return "📁";
-    }
 }

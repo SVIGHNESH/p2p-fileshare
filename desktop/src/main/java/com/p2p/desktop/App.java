@@ -4,17 +4,24 @@ import com.p2p.desktop.ui.*;
 import javafx.application.Application;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
+import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.stage.Stage;
 
 public class App extends Application {
 
-    private Tab searchTab, downloadsTab, sharingTab, settingsTab;
+    // Chrome palette (kept consistent with the existing per-tab surfaces).
+    private static final Color ACCENT     = Color.web("#0E8C77");
+    private static final Color TEXT_MUTED  = Color.web("#93A1AE");
+    private static final Color OK_GREEN    = Color.web("#46C46A");
+    private static final Color ERR_RED     = Color.web("#E5564E");
 
     @Override
     public void start(Stage stage) {
@@ -33,12 +40,11 @@ public class App extends Application {
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.setStyle("-fx-background-color: #0E1419;");
 
-        searchTab   = buildTab("🔍  Search",    new SearchView().build());
-        downloadsTab= buildTab("⬇  Downloads", new DownloadsView().build());
-        sharingTab  = buildTab("📤  My Files",  new SharingView().build());
-        settingsTab = buildTab("⚙  Settings",  new SettingsView().build());
-
-        tabs.getTabs().addAll(searchTab, downloadsTab, sharingTab, settingsTab);
+        tabs.getTabs().addAll(
+                buildTab("Search",    Icons.SEARCH,   new SearchView().build()),
+                buildTab("Downloads", Icons.DOWNLOAD, new DownloadsView().build()),
+                buildTab("My Files",  Icons.FOLDER,   new SharingView().build()),
+                buildTab("Settings",  Icons.SETTINGS, new SettingsView().build()));
         root.setCenter(tabs);
 
         // ── Status Bar ───────────────────────────────────────────────────────
@@ -54,39 +60,68 @@ public class App extends Application {
         AppState.get().init();
     }
 
+    /**
+     * DT.6: JavaFX calls this on the FX thread when the last window closes — the documented place for
+     * cleanup. Previously there was no stop() override, so teardown relied on JavaFX's implicit-exit
+     * calling {@code System.exit()} to fire a Runtime shutdown hook (which itself never stopped the
+     * auto-discovery listener). {@link AppState#shutdown()} now stops the peer server, downloads and
+     * discovery explicitly, so the process no longer depends on that {@code System.exit} to exit
+     * cleanly. The Runtime hook is kept for SIGTERM/Ctrl-C and is a no-op second pass (idempotent).
+     */
+    @Override
+    public void stop() {
+        AppState.get().shutdown();
+    }
+
     private HBox buildHeader() {
         HBox header = new HBox(12);
         header.setAlignment(Pos.CENTER_LEFT);
         header.setPadding(new Insets(16, 24, 16, 24));
         header.setStyle("-fx-background-color: #161F28; -fx-border-color: #26313C; -fx-border-width: 0 0 1 0;");
 
-        Label logo = new Label("⬡");
-        logo.setFont(Font.font("System", FontWeight.BOLD, 28));
-        logo.setTextFill(Color.web("#0E8C77"));
+        Node logo = Icons.icon(Icons.SHARE, 24, ACCENT, 2.4);
 
         Label appName = new Label("P2P Share");
         appName.setFont(Font.font("System", FontWeight.BOLD, 20));
         appName.setTextFill(Color.WHITE);
 
-        Label tagline = new Label("— Secure file sharing on your network");
+        Region gap = new Region();
+        gap.setMinWidth(4);
+
+        Label tagline = new Label("Secure file sharing on your local network");
         tagline.setFont(Font.font("System", 13));
-        tagline.setTextFill(Color.web("#93A1AE"));
+        tagline.setTextFill(TEXT_MUTED);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Label statusDot = new Label(AppState.get().isConnected.get() ? "● Connected" : "● Not connected");
-        statusDot.setTextFill(AppState.get().isConnected.get() ? Color.web("#46C46A") : Color.web("#E5564E"));
-        statusDot.setFont(Font.font("System", 13));
-        AppState.get().isConnected.addListener((o, ov, connected) ->
+        header.getChildren().addAll(logo, appName, gap, tagline, spacer, buildConnectionBadge());
+        return header;
+    }
+
+    /** A status pill that tracks the live tracker connection state. */
+    private Node buildConnectionBadge() {
+        boolean connected = AppState.get().isConnected.get();
+
+        Circle dot = new Circle(4, connected ? OK_GREEN : ERR_RED);
+        Label label = new Label(connected ? "Connected" : "Not connected");
+        label.setFont(Font.font("System", 12.5));
+        label.setTextFill(connected ? OK_GREEN : ERR_RED);
+
+        HBox badge = new HBox(7, dot, label);
+        badge.setAlignment(Pos.CENTER);
+        badge.setPadding(new Insets(5, 12, 5, 12));
+        badge.setStyle("-fx-background-color: #101A20; -fx-background-radius: 20; "
+                + "-fx-border-color: #26313C; -fx-border-radius: 20; -fx-border-width: 1;");
+
+        AppState.get().isConnected.addListener((o, ov, nv) ->
             javafx.application.Platform.runLater(() -> {
-                statusDot.setText(connected ? "● Connected" : "● Not connected");
-                statusDot.setTextFill(connected ? Color.web("#46C46A") : Color.web("#E5564E"));
+                dot.setFill(nv ? OK_GREEN : ERR_RED);
+                label.setText(nv ? "Connected" : "Not connected");
+                label.setTextFill(nv ? OK_GREEN : ERR_RED);
             })
         );
-
-        header.getChildren().addAll(logo, appName, tagline, spacer, statusDot);
-        return header;
+        return badge;
     }
 
     private HBox buildStatusBar() {
@@ -107,20 +142,43 @@ public class App extends Application {
         sharedLabel.setFont(Font.font("System", 11));
         AppState.get().sharedFolderPath.addListener((o, oldV, newV) -> sharedLabel.setText("Shared folder: " + newV));
 
-        Label encLabel = new Label("🔒 Encrypted");
-        encLabel.setTextFill(Color.web("#46C46A"));
-        encLabel.setFont(Font.font("System", 11));
-
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        bar.getChildren().addAll(myIpLabel, sharedLabel, spacer, encLabel);
+        // DT.7: the lock used to be an unconditional green "Encrypted". It now tracks the real TLS
+        // health (AppState.securityOk): if TLS init failed, the peer server never bound, so no
+        // transfers happen at all — the bar says "Encryption unavailable" in red rather than lying.
+        Label encLabel = new Label();
+        encLabel.setFont(Font.font("System", 11));
+        HBox enc = new HBox(6);
+        enc.setAlignment(Pos.CENTER);
+
+        Runnable applyEnc = () -> {
+            boolean ok = AppState.get().securityOk.get();
+            enc.getChildren().setAll(
+                    Icons.icon(ok ? Icons.LOCK : Icons.ALERT, 13, ok ? OK_GREEN : ERR_RED, 2.0),
+                    encLabel);
+            encLabel.setText(ok ? "Encrypted" : "Encryption unavailable");
+            encLabel.setTextFill(ok ? OK_GREEN : ERR_RED);
+        };
+        applyEnc.run();
+        AppState.get().securityOk.addListener((o, ov, nv) ->
+                javafx.application.Platform.runLater(applyEnc));
+
+        bar.getChildren().addAll(myIpLabel, sharedLabel, spacer, enc);
         return bar;
     }
 
-    private Tab buildTab(String title, javafx.scene.Node content) {
+    private Tab buildTab(String title, String iconPath, Node content) {
+        // The icon tracks selection: muted when idle, accent when active — the
+        // same cue the CSS gives the label (white + teal underline when selected).
+        SVGPath icon = Icons.path(iconPath, 17, TEXT_MUTED, 2.0);
         Tab tab = new Tab(title, content);
+        tab.setGraphic(new javafx.scene.Group(icon));
         tab.setStyle("-fx-background-color: #161F28;");
+        tab.selectedProperty().addListener((o, ov, selected) ->
+                icon.setStroke(selected ? ACCENT : TEXT_MUTED));
+        if (tab.isSelected()) icon.setStroke(ACCENT);
         return tab;
     }
 }

@@ -5,6 +5,21 @@
     -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
+/* Page-header type scale — shared by every content view's header so the four
+ * views read with one consistent hierarchy. These author-stylesheet rules also
+ * reliably win over the per-Label setFont() calls, which were silently dropping
+ * to the default size on at least the Downloads title. */
+.page-title {
+    -fx-font-size: 22px;
+    -fx-font-weight: bold;
+    -fx-text-fill: white;
+}
+
+.page-subtitle {
+    -fx-font-size: 13px;
+    -fx-text-fill: #5E6B77;
+}
+
 /* Tab pane */
 .tab-pane > .tab-header-area {
     -fx-background-color: #161F28;
@@ -33,6 +48,7 @@
     -fx-text-fill: #93A1AE;
     -fx-font-size: 14px;
     -fx-font-weight: normal;
+    -fx-graphic-text-gap: 9;
 }
 
 .tab:selected .tab-label {

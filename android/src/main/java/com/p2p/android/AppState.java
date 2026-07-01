@@ -76,7 +76,7 @@ public class AppState {
         trackerClient = new TrackerClient(trackerHost, trackerPort);
 
         if (!trackerHost.isEmpty()) {
-            isConnected = trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, sharedFiles);
+            isConnected = trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, sharedFiles, myDisplayName.get());
         }
 
         if (!isConnected) {
@@ -88,7 +88,7 @@ public class AppState {
         // Re-register periodically so the tracker doesn't evict us (90s timeout).
         keepAlive.scheduleAtFixedRate(() -> {
             if (isConnected && trackerClient != null) {
-                trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, new ArrayList<>(sharedFiles));
+                trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, new ArrayList<>(sharedFiles), myDisplayName.get());
             }
         }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
     }
@@ -122,7 +122,7 @@ public class AppState {
                 trackerHost = parts[0];
                 trackerPort = Integer.parseInt(parts[1]);
                 trackerClient.setTracker(trackerHost, trackerPort);
-                isConnected = trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, sharedFiles);
+                isConnected = trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, sharedFiles, myDisplayName.get());
                 savePrefs();
                 if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
             } else if (!isConnected) {
@@ -185,7 +185,8 @@ public class AppState {
         if (isConnected && trackerClient != null) {
             // Network call must not run on the main thread (would throw NetworkOnMainThreadException).
             final List<FileInfo> snapshot = new ArrayList<>(sharedFiles);
-            new Thread(() -> trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, snapshot)).start();
+            final String name = myDisplayName.get();
+            new Thread(() -> trackerClient.register(myIp, Protocol.DEFAULT_PEER_PORT, snapshot, name)).start();
         }
     }
 

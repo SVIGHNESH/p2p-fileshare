@@ -40,19 +40,27 @@ public class PeerServer {
         this.sharedFolderProvider = sharedFolderProvider;
     }
 
-    public void start() {
-        // Bind synchronously so the bound port is known the moment start() returns and a
-        // bind/TLS-init failure surfaces here instead of being swallowed on a background
-        // thread (which left callers believing the server was up). Only the accept loop runs async.
+    /**
+     * Bind the server socket and start serving. Returns {@code true} iff the socket bound and the
+     * accept loop started, {@code false} if the bind (or TLS-context init) failed.
+     *
+     * <p>Binding is synchronous so the bound port is known the moment {@code start()} returns and a
+     * bind/TLS-init failure surfaces here instead of being swallowed on a background thread (which
+     * left callers believing the server was up). Only the accept loop runs async. The boolean result
+     * is what lets a caller decline to advertise an unreachable address to the tracker — registering
+     * a port the server never bound poisons discovery for every downloader.
+     */
+    public boolean start() {
         try {
             serverSocket = TLSHelper.createServerSocket(port);
         } catch (Exception e) {
             System.err.println("[PeerServer] Failed to start on port " + port + ": " + e.getMessage());
-            return;
+            return false;
         }
         running = true;
         System.out.println("[PeerServer] Listening on port " + getBoundPort() + " (TLS)");
         new Thread(this::acceptLoop, "peer-server").start();
+        return true;
     }
 
     private void acceptLoop() {
@@ -159,11 +167,14 @@ public class PeerServer {
     public int getPort() { return port; }
 
     /**
-     * The actual bound port, valid after {@link #start()} returns successfully. Differs from
-     * {@link #getPort()} when the server was constructed with port 0 (ephemeral), which lets
-     * tests bind a free port and connect to it without racing the accept loop.
+     * The actual bound port, valid after {@link #start()} returns {@code true}, or {@code -1} if the
+     * server is not bound (start failed or was never called). Differs from {@link #getPort()} when the
+     * server was constructed with port 0 (ephemeral), which lets a caller bind a free OS-assigned port
+     * and advertise the real one. Returning {@code -1} rather than the requested {@code port} on
+     * failure is deliberate: a caller must be able to tell "didn't bind" from "bound on the requested
+     * port" so it never advertises an address nothing is listening on.
      */
     public int getBoundPort() {
-        return serverSocket != null ? serverSocket.getLocalPort() : port;
+        return serverSocket != null ? serverSocket.getLocalPort() : -1;
     }
 }

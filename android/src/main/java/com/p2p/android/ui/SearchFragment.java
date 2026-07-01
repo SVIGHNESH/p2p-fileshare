@@ -60,7 +60,7 @@ public class SearchFragment extends Fragment {
         AppState state = AppState.get(requireContext());
         if (!state.isConnected) {
             searchProgress.setVisibility(View.GONE);
-            statusText.setText("⚠ Not connected. Go to Settings to configure the tracker.");
+            statusText.setText("Not connected. Go to Settings to configure the tracker.");
             return;
         }
 
@@ -91,7 +91,7 @@ public class SearchFragment extends Fragment {
         AppState state = AppState.get(requireContext());
         if (!state.isConnected) {
             searchProgress.setVisibility(View.GONE);
-            statusText.setText("⚠ Not connected. Go to Settings to configure the tracker.");
+            statusText.setText("Not connected. Go to Settings to configure the tracker.");
             return;
         }
 
@@ -148,7 +148,7 @@ public class SearchFragment extends Fragment {
         details.setPadding(0, 6, 0, 16);
 
         Button downloadBtn = new Button(requireContext());
-        downloadBtn.setText("⬇  Download");
+        downloadBtn.setText("Download");
         downloadBtn.setTextColor(0xFFFFFFFF);
         downloadBtn.setBackgroundResource(R.drawable.button_primary);
 
@@ -169,12 +169,12 @@ public class SearchFragment extends Fragment {
         task.onProgressUpdate = t -> requireActivity().runOnUiThread(() ->
                 btn.setText(t.getProgressText()));
         task.onComplete = t -> requireActivity().runOnUiThread(() -> {
-            btn.setText("✓ Done!");
+            btn.setText("Done!");
             btn.setEnabled(false);
             state.refreshSharedFiles();
         });
         task.onError = t -> requireActivity().runOnUiThread(() ->
-                btn.setText("✗ Failed — tap to retry"));
+                btn.setText("Failed - tap to retry"));
 
         state.downloads.add(task);
         state.downloadManager.download(task);

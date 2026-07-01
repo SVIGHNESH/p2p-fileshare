@@ -12,8 +12,14 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
 import java.io.File;
+import java.util.function.UnaryOperator;
 
 public class SettingsView {
+
+    private static final String SAVE_IDLE_STYLE =
+            "-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 10; -fx-cursor: hand;";
+    private static final String SAVE_BUSY_STYLE =
+            "-fx-background-color: #26313C; -fx-text-fill: #CBD5DF; -fx-background-radius: 10;";
 
     public Node build() {
         ScrollPane scroll = new ScrollPane();
@@ -34,32 +40,32 @@ public class SettingsView {
         // ── Network Section ──────────────────────────────────────────────────
         root.getChildren().addAll(
                 pageTitle,
-                buildSectionHeader("🌐  Network — Tracker Connection"),
+                buildSectionHeader(Icons.GLOBE, "Network - Tracker Connection"),
                 buildInfoBox(
                         "What is a Tracker?",
                         "The Tracker is a small program that keeps track of who has which files. " +
                         "One person in your group needs to run it (see the README). " +
-                        "If auto-discovery is enabled, you don't need to type anything — " +
+                        "If auto-discovery is enabled, you don't need to type anything - " +
                         "the tracker will be found automatically when you're on the same Wi-Fi."),
                 buildAutoDiscoveryCard(state),
                 buildTrackerManualCard(state),
 
-                buildSectionHeader("📂  Shared Folder"),
+                buildSectionHeader(Icons.FOLDER, "Shared Folder"),
                 buildInfoBox(
                         "Your shared folder",
                         "Files you place in this folder are visible to others on the network. " +
                         "Downloaded files are also saved here."),
                 buildFolderCard(state),
 
-                buildSectionHeader("👤  Your Profile"),
+                buildSectionHeader(Icons.USER, "Your Profile"),
                 buildProfileCard(state),
 
-                buildSectionHeader("🔒  Security"),
+                buildSectionHeader(Icons.LOCK, "Security"),
                 buildSecurityCard(),
 
                 buildSaveButton(state),
 
-                buildSectionHeader("ℹ️  About"),
+                buildSectionHeader(Icons.INFO, "About"),
                 buildAboutCard()
         );
 
@@ -80,13 +86,15 @@ public class SettingsView {
         return card;
     }
 
-    private Node buildSectionHeader(String text) {
+    private Node buildSectionHeader(String iconPath, String text) {
         Label label = new Label(text);
         label.setFont(Font.font("System", FontWeight.BOLD, 16));
         label.setTextFill(Color.web("#B3C0CC"));
+        HBox titleRow = new HBox(10, Icons.icon(iconPath, 17, Color.web("#B3C0CC"), 2.0), label);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
         Separator sep = new Separator();
         sep.setStyle("-fx-background-color: #26313C;");
-        VBox box = new VBox(8, label, sep);
+        VBox box = new VBox(8, titleRow, sep);
         return box;
     }
 
@@ -96,14 +104,16 @@ public class SettingsView {
         box.setStyle(
                 "-fx-background-color: #101A20; -fx-background-radius: 8; " +
                 "-fx-border-color: #24414F; -fx-border-radius: 8; -fx-border-width: 1;");
-        Label t = new Label("ℹ  " + title);
+        Label t = new Label(title);
         t.setFont(Font.font("System", FontWeight.BOLD, 13));
         t.setTextFill(Color.web("#58A8FF"));
+        HBox titleRow = new HBox(8, Icons.icon(Icons.INFO, 14, Color.web("#58A8FF"), 2.0), t);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
         Label b = new Label(body);
         b.setTextFill(Color.web("#93A1AE"));
         b.setFont(Font.font("System", 13));
         b.setWrapText(true);
-        box.getChildren().addAll(t, b);
+        box.getChildren().addAll(titleRow, b);
         return box;
     }
 
@@ -124,19 +134,11 @@ public class SettingsView {
         b.setWrapText(true);
         text.getChildren().addAll(t, b);
 
-        ToggleButton toggle = new ToggleButton(state.trackerHost.get().isEmpty() ? "ON" : "OFF");
-        toggle.setSelected(state.trackerHost.get().isEmpty());
-        toggle.setFont(Font.font("System", FontWeight.BOLD, 13));
-        toggle.setStyle(toggle.isSelected()
-                ? "-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 20;"
-                : "-fx-background-color: #26313C; -fx-text-fill: #888; -fx-background-radius: 20;");
-        toggle.selectedProperty().addListener((o, ov, nv) -> {
-            toggle.setText(nv ? "ON" : "OFF");
-            toggle.setStyle(nv
-                    ? "-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 20;"
-                    : "-fx-background-color: #26313C; -fx-text-fill: #888; -fx-background-radius: 20;");
-            if (nv) state.trackerHost.set(""); // Clear manual host → enable autodiscovery
-        });
+        // DT.8: a real sliding switch bound to the explicit autoDiscover preference, replacing the bare
+        // ON/OFF text ToggleButton whose "off" state did nothing (auto-discovery was inferred from a
+        // blank host, so toggling off changed neither the persisted setting nor the behavior). The
+        // switch reflects and drives AppState.autoDiscover, which the connection logic now honors.
+        ToggleSwitch toggle = new ToggleSwitch(state.autoDiscover);
 
         card.getChildren().addAll(text, toggle);
         return card;
@@ -161,13 +163,30 @@ public class SettingsView {
         HBox.setHgrow(hostField, Priority.ALWAYS);
         hostField.setStyle(fieldStyle());
         hostField.textProperty().bindBidirectional(state.trackerHost);
+        // DT.8: typing a manual tracker address means the user wants manual mode, so flip auto-discover
+        // off. onKeyTyped fires only for real keystrokes — never for the programmatic setText the
+        // bidirectional binding does — so this can't be tripped by state updates, only by the user.
+        hostField.setOnKeyTyped(e -> state.autoDiscover.set(false));
 
-        TextField portField = new TextField(state.trackerPort.get());
+        TextField portField = new TextField();
         portField.setPromptText("Port");
         portField.setPrefWidth(90);
         portField.setPrefHeight(40);
         portField.setFont(Font.font("System", 14));
         portField.setStyle(fieldStyle());
+        // DT.5: reject any keystroke that would make the field hold a non-numeric or out-of-range
+        // port, so it can never contain "9000abc" (which would blow up Integer.parseInt on the Save
+        // worker) nor a value like "70000" that the field shows but the app silently clamps to the
+        // default. The filter vetoes the change before it lands, composing with the bidirectional
+        // binding below (the binding's programmatic "9000" set passes). AppState.parseTrackerPort
+        // remains the defensive backstop for a blank field or a stale/hand-edited preference.
+        UnaryOperator<TextFormatter.Change> validPort = c -> {
+            String t = c.getControlNewText();
+            if (t.isEmpty()) return c;                 // allow clearing the field
+            if (!t.matches("\\d{1,5}")) return null;   // digits only, at most 5
+            return Integer.parseInt(t) <= 65535 ? c : null; // never exceed the max TCP port
+        };
+        portField.setTextFormatter(new TextFormatter<>(validPort));
         portField.textProperty().bindBidirectional(state.trackerPort);
 
         fields.getChildren().addAll(hostField, portField);
@@ -228,25 +247,67 @@ public class SettingsView {
         return card;
     }
 
+    // DT.7: this card used to be a hardcoded green "Encryption: Always On" reassurance even when TLS
+    // init had actually failed (the failure was swallowed to System.err). It now tracks the real
+    // AppState.securityOk and repaints in full — background, border, heading, icon, and body — so it
+    // can never show a red heading on a green card still promising encrypted transfers.
+    private static final String SECURITY_OK_CARD =
+            "-fx-background-color: #0E1F16; -fx-background-radius: 10; -fx-border-color: #2C5A3F; -fx-border-radius: 10; -fx-border-width: 1;";
+    private static final String SECURITY_BAD_CARD =
+            "-fx-background-color: #1E1012; -fx-background-radius: 10; -fx-border-color: #5A2C2C; -fx-border-radius: 10; -fx-border-width: 1;";
+    private static final Color SECURITY_OK_HEAD = Color.web("#46C46A");
+    private static final Color SECURITY_OK_BODY = Color.web("#7FB892");
+    private static final Color SECURITY_BAD_HEAD = Color.web("#E5564E");
+    private static final Color SECURITY_BAD_BODY = Color.web("#D29A9A");
+
     private Node buildSecurityCard() {
         VBox card = new VBox(10);
         card.setPadding(new Insets(16, 20, 16, 20));
-        card.setStyle("-fx-background-color: #0E1F16; -fx-background-radius: 10; -fx-border-color: #2C5A3F; -fx-border-radius: 10; -fx-border-width: 1;");
 
-        Label heading = new Label("🔒  Encryption: Always On");
+        Label heading = new Label();
         heading.setFont(Font.font("System", FontWeight.BOLD, 14));
-        heading.setTextFill(Color.web("#46C46A"));
 
-        Label body = new Label(
-                "All file transfers between peers are encrypted using TLS 1.3 " +
-                "with a self-signed certificate generated at startup. " +
-                "File integrity is verified with SHA-256 checksums on every chunk. " +
-                "You don't need to do anything — it's automatic.");
-        body.setTextFill(Color.web("#7FB892"));
+        HBox headingRow = new HBox(9);
+        headingRow.setAlignment(Pos.CENTER_LEFT);
+
+        Label body = new Label();
         body.setFont(Font.font("System", 13));
         body.setWrapText(true);
 
-        card.getChildren().addAll(heading, body);
+        AppState state = AppState.get();
+        Runnable apply = () -> {
+            boolean ok = state.securityOk.get();
+            card.setStyle(ok ? SECURITY_OK_CARD : SECURITY_BAD_CARD);
+            heading.setText(ok ? "Encryption: Always On" : "Encryption unavailable");
+            heading.setTextFill(ok ? SECURITY_OK_HEAD : SECURITY_BAD_HEAD);
+            headingRow.getChildren().setAll(
+                    Icons.icon(ok ? Icons.LOCK : Icons.ALERT, 15,
+                            ok ? SECURITY_OK_HEAD : SECURITY_BAD_HEAD, ok ? 2.0 : 2.2),
+                    heading);
+            if (ok) {
+                body.setText(
+                        "All file transfers between peers are encrypted using TLS 1.3 " +
+                        "with a self-signed certificate generated at startup. " +
+                        "File integrity is verified with SHA-256 checksums on every chunk. " +
+                        "You don't need to do anything - it's automatic.");
+            } else {
+                String detail = state.securityDetail.get();
+                body.setText(
+                        "Secure transfers could not be started" +
+                        (detail == null || detail.isBlank() ? "." : ": " + detail + ".") +
+                        " Peers cannot send or receive files until this is fixed. " +
+                        "Try restarting the app; if it persists, make sure the app can write to its " +
+                        "keystore folder (~/.p2pshare).");
+            }
+            body.setTextFill(ok ? SECURITY_OK_BODY : SECURITY_BAD_BODY);
+        };
+        apply.run();
+        // securityOk is only ever set on the FX thread, but the listener is wrapped in runLater to
+        // match the rest of the chrome's defensive marshalling.
+        state.securityOk.addListener((o, ov, nv) ->
+                javafx.application.Platform.runLater(apply));
+
+        card.getChildren().addAll(headingRow, body);
         return card;
     }
 
@@ -255,28 +316,75 @@ public class SettingsView {
         saveBtn.setFont(Font.font("System", FontWeight.BOLD, 15));
         saveBtn.setPrefHeight(46);
         saveBtn.setPrefWidth(200);
-        saveBtn.setStyle(
-                "-fx-background-color: #0E8C77; -fx-text-fill: white; " +
-                "-fx-background-radius: 10; -fx-cursor: hand;");
+        saveBtn.setStyle(SAVE_IDLE_STYLE);
+
+        // DT.5: a colored status line that reports the REAL save outcome. The button used to morph
+        // into a green "Saved!" the instant it was clicked — before the background reconnect() had
+        // even run, so it claimed success even when the tracker was unreachable or the port unparsable.
+        Label status = new Label();
+        status.setFont(Font.font("System", FontWeight.BOLD, 13));
+        status.setWrapText(true);
+        status.setVisible(false);
+        status.setManaged(false);
+        HBox.setHgrow(status, Priority.ALWAYS);
+
         saveBtn.setOnAction(e -> {
             state.savePrefs();
-            new Thread(() -> {
-                state.reconnect();
-            }).start();
-            saveBtn.setText("✓ Saved!");
-            saveBtn.setStyle("-fx-background-color: #46C46A; -fx-text-fill: white; -fx-background-radius: 10;");
-            new Thread(() -> {
-                try { Thread.sleep(2000); } catch (Exception ignored) {}
-                javafx.application.Platform.runLater(() -> {
-                    saveBtn.setText("Save Settings");
-                    saveBtn.setStyle("-fx-background-color: #0E8C77; -fx-text-fill: white; -fx-background-radius: 10;");
-                });
-            }).start();
+            // Show progress while the (blocking, 5s-timeout) reconnect runs on a worker, then reflect
+            // the ACTUAL result. An unreachable tracker keeps the button in "Saving..." until it really
+            // fails, rather than instantly lying that it saved.
+            saveBtn.setDisable(true);
+            saveBtn.setText("Saving...");
+            saveBtn.setGraphic(null);
+            saveBtn.setStyle(SAVE_BUSY_STYLE);
+            status.setVisible(false);
+            status.setManaged(false);
+            Thread worker = new Thread(() -> {
+                AppState.ReconnectResult result = state.reconnect();
+                javafx.application.Platform.runLater(() -> showSaveResult(saveBtn, status, result));
+            }, "settings-save");
+            worker.setDaemon(true);
+            worker.start();
         });
 
-        HBox box = new HBox(saveBtn);
+        HBox box = new HBox(14, saveBtn, status);
         box.setAlignment(Pos.CENTER_LEFT);
         return box;
+    }
+
+    /** Restores the Save button and shows an honest, color-coded outcome of the last save (DT.5). */
+    private void showSaveResult(Button saveBtn, Label status, AppState.ReconnectResult result) {
+        saveBtn.setDisable(false);
+        saveBtn.setText("Save Settings");
+        saveBtn.setGraphic(null);
+        saveBtn.setStyle(SAVE_IDLE_STYLE);
+
+        String msg;
+        String iconPath;
+        Color color;
+        switch (result) {
+            case CONNECTED -> {
+                msg = "Connected to tracker.";
+                iconPath = Icons.CHECK;
+                color = Color.web("#46C46A");
+            }
+            case UNREACHABLE -> {
+                msg = "Settings saved, but the tracker couldn't be reached.";
+                iconPath = Icons.ALERT;
+                color = Color.web("#E0A458");
+            }
+            default -> { // AUTO_DISCOVER: settings persisted; auto-discovery owns the connection
+                msg = "Settings saved.";
+                iconPath = Icons.CHECK;
+                color = Color.web("#46C46A");
+            }
+        }
+        status.setText(msg);
+        status.setTextFill(color);
+        status.setGraphic(Icons.icon(iconPath, 14, color, 2.2));
+        status.setGraphicTextGap(7);
+        status.setVisible(true);
+        status.setManaged(true);
     }
 
     private String fieldStyle() {

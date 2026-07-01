@@ -46,18 +46,19 @@ public class SettingsFragment extends Fragment {
                     boolean ok = state.trackerClient.register(
                             state.myIp,
                             com.p2p.core.protocol.Protocol.DEFAULT_PEER_PORT,
-                            state.sharedFiles);
+                            state.sharedFiles,
+                            state.myDisplayName.get());
                     state.isConnected = ok;
                     requireActivity().runOnUiThread(() ->
                         Toast.makeText(requireContext(),
-                                ok ? "✓ Connected to tracker!" : "⚠ Could not connect to tracker",
+                                ok ? "Connected to tracker!" : "Could not connect to tracker",
                                 Toast.LENGTH_SHORT).show()
                     );
                 }).start();
             }
 
             state.savePrefs();
-            saveBtn.setText("✓ Saved!");
+            saveBtn.setText("Saved!");
             view.postDelayed(() -> saveBtn.setText("Save Settings"), 2000);
         });
     }

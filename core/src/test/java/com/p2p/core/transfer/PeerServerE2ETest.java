@@ -137,6 +137,40 @@ class PeerServerE2ETest {
         }
     }
 
+    // ── Honest bind contract: a server that didn't bind must NOT advertise a port ──
+    // (Desktop now relies on this to avoid registering an unreachable address with the tracker —
+    //  a dead advertised port poisons discovery so every downloader is handed a port nothing serves.)
+
+    @Test
+    void startReportsBindFailureAndAdvertisesNoPort(@TempDir Path shared) throws Exception {
+        TLSHelper.init(shared.toFile());
+        // Occupy a port with a plain server socket, then point a PeerServer at the same port so its
+        // TLS bind fails. start() must report the failure and getBoundPort() must be -1, not the
+        // requested port — otherwise a caller can't tell "didn't bind" from "bound as requested".
+        try (java.net.ServerSocket occupied = new java.net.ServerSocket(0)) {
+            int taken = occupied.getLocalPort();
+            PeerServer server = new PeerServer(taken, shared::toFile);
+            assertFalse(server.start(), "start() must return false when the port cannot be bound");
+            assertEquals(-1, server.getBoundPort(),
+                    "an unbound server must advertise no port (-1), never the requested one");
+        }
+    }
+
+    @Test
+    void startReportsTheRealEphemeralPort(@TempDir Path shared) throws Exception {
+        TLSHelper.init(shared.toFile());
+        // Port 0 -> OS-assigned. start() must succeed and expose the real bound port, which is what
+        // the desktop advertises to the tracker (instead of a hardcoded 9001 that may not be bound).
+        PeerServer server = new PeerServer(0, shared::toFile);
+        try {
+            assertTrue(server.start(), "start() must return true on a successful ephemeral bind");
+            assertTrue(server.getBoundPort() > 0,
+                    "a bound ephemeral server must expose its real OS-assigned port, was " + server.getBoundPort());
+        } finally {
+            server.stop();
+        }
+    }
+
     private static DownloadTask download(DownloadManager dm, int port, String name, long size,
                                          File out, String checksum) throws Exception {
         return download(dm, port, name, size, out, checksum, null);
